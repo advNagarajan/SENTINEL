@@ -1,0 +1,23 @@
+[target]
+name       = "ibm_mainframe"
+runtime_id = "mainframe_node_01"
+driver     = "tn3270"
+reducer    = "stream_parser"
+stability  = "oia_monitor"
+
+[tn3270]
+host        = "127.0.0.1"
+port        = 3270
+device_type = "IBM-3278-2"
+codepage    = "cp037"
+use_tls     = false
+
+[stability]
+poll_interval_ms = 50
+settle_ms        = 100
+max_wait_ms      = 10000
+quiescence_ms    = 150
+
+[logging]
+level    = "INFO"
+log_file = "logs/mainframe_audit.jsonl"
