@@ -8,8 +8,15 @@ from schemas.pipeline import TransportFrame
 class EnvironmentDriver(ABC):
     """Abstract interface for low-level environment connection, clock control, and framed I/O."""
 
+    @property
+    @abstractmethod
+    def runtime_id(self) -> str:
+        """Return unique runtime session identifier."""
+        pass
+
     @abstractmethod
     async def connect(self) -> None:
+
         """Establish connection to the target environment."""
         pass
 
@@ -39,9 +46,20 @@ class EnvironmentDriver(ABC):
         pass
 
     @abstractmethod
+    async def send_aid(self, aid_name: str, cursor_row: int = 0, cursor_col: int = 0) -> None:
+        """Send AID/action key to target environment."""
+        pass
+
+    @abstractmethod
+    async def send_field_input(self, text: str, row: int, col: int, aid_name: str = "ENTER") -> None:
+        """Type text into specific grid position and trigger action key."""
+        pass
+
+    @abstractmethod
     async def health_check(self) -> bool:
         """Check if connection is alive and healthy."""
         pass
+
 
     @abstractmethod
     def add_event_listener(self, listener: Callable[[RuntimeEvent], None]) -> None:

@@ -29,18 +29,39 @@ TELNET_OPT_EOR = 25
 TELNET_OPT_TERMINAL_TYPE = 24
 TELNET_OPT_TN3270E = 40
 
-# 3270 AID Key Constants
+# Exact 3270 AID Key Table (IBM 3270 Data Stream Programmer's Reference)
 AID_MAP: dict[str, int] = {
     "ENTER": 0x7D,
     "CLEAR": 0x6D,
     "PA1": 0x6C,
     "PA2": 0x6E,
     "PA3": 0x6B,
+    "SYSREQ": 0xF0,
+    "PF1": 0xF1,
+    "PF2": 0xF2,
+    "PF3": 0xF3,
+    "PF4": 0xF4,
+    "PF5": 0xF5,
+    "PF6": 0xF6,
+    "PF7": 0xF7,
+    "PF8": 0xF8,
+    "PF9": 0xF9,
+    "PF10": 0x7A,
+    "PF11": 0x7B,
+    "PF12": 0x7C,
+    "PF13": 0xC1,
+    "PF14": 0xC2,
+    "PF15": 0xC3,
+    "PF16": 0xC4,
+    "PF17": 0xC5,
+    "PF18": 0xC6,
+    "PF19": 0xC7,
+    "PF20": 0xC8,
+    "PF21": 0xC9,
+    "PF22": 0x4A,
+    "PF23": 0x4B,
+    "PF24": 0x4C,
 }
-for i in range(1, 13):
-    AID_MAP[f"PF{i}"] = 0xF1 + (i - 1)
-for i in range(13, 25):
-    AID_MAP[f"PF{i}"] = 0xC1 + (i - 13)
 
 # 3270 12-bit Address Code Array
 ADDR_CODE = [
@@ -74,7 +95,7 @@ class TN3270Driver(EnvironmentDriver):
         self.port = port
         self.device_type = device_type
         self.use_tls = use_tls
-        self.runtime_id = runtime_id
+        self._runtime_id = runtime_id
 
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None
@@ -84,6 +105,10 @@ class TN3270Driver(EnvironmentDriver):
         self._event_listeners: list[Callable[[RuntimeEvent], None]] = []
         self._frame_seq: int = 0
         self._is_connected: bool = False
+
+    @property
+    def runtime_id(self) -> str:
+        return self._runtime_id
 
     def add_event_listener(self, listener: Callable[[RuntimeEvent], None]) -> None:
         self._event_listeners.append(listener)
