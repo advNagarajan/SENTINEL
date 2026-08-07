@@ -202,14 +202,12 @@ class TN3270Driver(EnvironmentDriver):
         data_acc = bytearray(self._buffer)
         self._buffer.clear()
 
-        start_time = time.time()
         while True:
             if data_acc:
                 # Check for Telnet IAC EOR marker or full record
                 eor_pos = data_acc.find(bytes([TELNET_IAC, TELNET_EOR]))
                 if eor_pos != -1:
                     frame_payload = bytes(data_acc[:eor_pos])
-                    # Retain any bytes received after EOR in buffer
                     self._buffer.extend(data_acc[eor_pos + 2:])
                     self._frame_seq += 1
                     
@@ -227,14 +225,12 @@ class TN3270Driver(EnvironmentDriver):
                     return frame
 
             try:
-                chunk = await asyncio.wait_for(self._reader.read(4096), timeout=0.5)
+                chunk = await asyncio.wait_for(self._reader.read(4096), timeout=0.2)
                 if not chunk:
                     break
                 data_acc.extend(chunk)
             except asyncio.TimeoutError:
-                if data_acc:
-                    # Break on timeout if data arrived without explicit EOR marker
-                    break
+                break
 
         self._frame_seq += 1
         frame = TransportFrame(
@@ -243,12 +239,14 @@ class TN3270Driver(EnvironmentDriver):
             timestamp=time.time(),
             frame_seq=self._frame_seq,
         )
-        self._emit_event(
-            RuntimeEventType.SCREEN_RECEIVED,
-            f"Received TransportFrame #{self._frame_seq}",
-            {"bytes_len": len(data_acc)},
-        )
+        if data_acc:
+            self._emit_event(
+                RuntimeEventType.SCREEN_RECEIVED,
+                f"Received TransportFrame #{self._frame_seq}",
+                {"bytes_len": len(data_acc)},
+            )
         return frame
+
 
     async def write_raw(self, data: bytes) -> None:
         """Inject raw bytes into the 3270 host connection."""

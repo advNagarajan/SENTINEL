@@ -37,15 +37,23 @@ class OIAStabilityEngine:
         last_cursor = (-1, -1)
         hash_stable_count = 0
 
+        last_state = None
         while (time.time() - start_time) * 1000 < self.max_wait_ms:
             iterations += 1
             frame = await driver.read_frame()
-            decoded = reducer.parse_frame(frame)
-            som = reducer.build_object_model(decoded)
-            state, _ = reducer.reduce_state(som, runtime_id, generation)
+            if frame.raw_payload:
+                decoded = reducer.parse_frame(frame)
+                som = reducer.build_object_model(decoded)
+                state, _ = reducer.reduce_state(som, runtime_id, generation)
+                last_state = state
+            elif last_state is not None:
+                state = last_state
+            else:
+                await asyncio.sleep(self.poll_interval_ms / 1000.0)
+                continue
 
             # Signal 1: OIA Ready byte
-            is_oia_ready = (som.oia_status == "READY")
+            is_oia_ready = (state.metadata.get("oia_status") == "READY")
 
             # Signal 2 & 3: Screen hash and cursor stability
             if state.screen_hash == last_hash and (state.cursor["row"], state.cursor["col"]) == last_cursor:
@@ -66,7 +74,7 @@ class OIAStabilityEngine:
                     delta_value=0.0,
                     iterations=iterations,
                     details={
-                        "oia_status": som.oia_status,
+                        "oia_status": state.metadata.get("oia_status"),
                         "hash_stable_count": hash_stable_count,
                         "elapsed_ms": (time.time() - start_time) * 1000,
                     },
@@ -76,6 +84,7 @@ class OIAStabilityEngine:
                 return state, report
 
             await asyncio.sleep(self.poll_interval_ms / 1000.0)
+
 
         # Timeout reached — return state with is_stable=False
         report = StabilityReport(
