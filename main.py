@@ -75,11 +75,15 @@ def print_interactive_help() -> None:
 
 async def main_loop(config_path: str, interactive: bool) -> None:
     driver, reducer, stability, config = DriverRegistry.create_target(config_path)
+    log_file = config.get("logging", {}).get("log_file", "logs/mainframe_audit.jsonl")
+    from layer4.audit_log import AuditLogger
+    audit_logger = AuditLogger(log_file=log_file)
 
     events_log: list[str] = []
 
     def on_event(ev: RuntimeEvent) -> None:
         events_log.append(f"[{ev.event_type.value.upper()}] {ev.message}")
+        audit_logger.log_event(ev)
 
     driver.add_event_listener(on_event)
 
@@ -94,8 +98,10 @@ async def main_loop(config_path: str, interactive: bool) -> None:
             generation=generation,
         )
 
+        audit_logger.log_state(state)
         render_screen_view(state, config)
         render_fields_summary(state)
+
 
         if interactive and hasattr(driver, "send_aid"):
             print_interactive_help()
@@ -131,6 +137,7 @@ async def main_loop(config_path: str, interactive: bool) -> None:
                             runtime_id=driver.runtime_id,
                             generation=generation,
                         )
+                        audit_logger.log_state(state)
                         render_screen_view(state, config)
                         render_fields_summary(state)
                     except ValueError:
@@ -145,8 +152,10 @@ async def main_loop(config_path: str, interactive: bool) -> None:
                         runtime_id=driver.runtime_id,
                         generation=generation,
                     )
+                    audit_logger.log_state(state)
                     render_screen_view(state, config)
                     render_fields_summary(state)
+
                 else:
                     print(f"Unknown command '{user_cmd}'. Type HELP for available commands.")
 
