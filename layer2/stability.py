@@ -81,7 +81,16 @@ class OIAStabilityEngine:
                 )
                 state.stability_report = report
                 state.is_stable = True
+                logger.info(
+                    "l2_stability_converged",
+                    layer="layer2",
+                    method=report.method,
+                    iterations=iterations,
+                    elapsed_ms=(time.time() - start_time) * 1000,
+                    screen_hash=state.screen_hash,
+                )
                 return state, report
+
 
             await asyncio.sleep(self.poll_interval_ms / 1000.0)
 

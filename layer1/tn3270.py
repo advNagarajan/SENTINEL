@@ -129,12 +129,13 @@ class TN3270Driver(EnvironmentDriver):
     async def connect(self) -> None:
         """Establish TCP/TLS connection and handle Telnet IAC handshake."""
         ssl_ctx = ssl.create_default_context() if self.use_tls else None
-        logger.info("Connecting to TN3270 host", host=self.host, port=self.port, tls=self.use_tls)
+        logger.info("l1_connecting", layer="layer1", host=self.host, port=self.port, tls=self.use_tls)
         
         self._reader, self._writer = await asyncio.open_connection(
             self.host, self.port, ssl=ssl_ctx
         )
         self._is_connected = True
+        logger.info("l1_connected", layer="layer1", host=self.host, port=self.port)
         self._emit_event(RuntimeEventType.CONNECTED, f"Connected to {self.host}:{self.port}")
         
         # Negotiate initial Telnet options
@@ -146,18 +147,18 @@ class TN3270Driver(EnvironmentDriver):
             self._writer.close()
             await self._writer.wait_closed()
         self._is_connected = False
+        logger.info("l1_disconnected", layer="layer1", host=self.host, port=self.port)
         self._emit_event(RuntimeEventType.DISCONNECTED, "Disconnected from host")
-        logger.info("Disconnected from TN3270 host")
 
     async def freeze(self) -> None:
         """Freeze execution loop — incoming socket packets are held in buffer queue."""
         self._frozen = True
-        logger.debug("TN3270 driver stream frozen")
+        logger.debug("l1_stream_frozen", layer="layer1")
 
     async def unfreeze(self) -> None:
         """Unfreeze execution loop — releases buffered socket packets."""
         self._frozen = False
-        logger.debug("TN3270 driver stream unfrozen")
+        logger.debug("l1_stream_unfrozen", layer="layer1")
 
     async def health_check(self) -> bool:
         """Check if socket connection remains open."""
@@ -242,6 +243,7 @@ class TN3270Driver(EnvironmentDriver):
                         timestamp=time.time(),
                         frame_seq=self._frame_seq,
                     )
+                    logger.info("l1_frame_received", layer="layer1", frame_seq=self._frame_seq, bytes_len=len(frame_payload))
                     self._emit_event(
                         RuntimeEventType.SCREEN_RECEIVED,
                         f"Received TransportFrame #{self._frame_seq}",
@@ -265,6 +267,7 @@ class TN3270Driver(EnvironmentDriver):
             frame_seq=self._frame_seq,
         )
         if data_acc:
+            logger.info("l1_frame_received", layer="layer1", frame_seq=self._frame_seq, bytes_len=len(data_acc))
             self._emit_event(
                 RuntimeEventType.SCREEN_RECEIVED,
                 f"Received TransportFrame #{self._frame_seq}",
@@ -290,6 +293,7 @@ class TN3270Driver(EnvironmentDriver):
         # 3270 Command sequence: [AID] [Cursor Address (2 bytes)] [IAC EOR]
         payload = bytes([aid_byte]) + addr_bytes + bytes([TELNET_IAC, TELNET_EOR])
         await self.write_raw(payload)
+        logger.info("l1_aid_injected", layer="layer1", aid_name=aid_name, aid_code=hex(aid_byte), cursor=(cursor_row, cursor_col))
         self._emit_event(
             RuntimeEventType.AID_SENT,
             f"Sent AID key: {aid_name}",
@@ -313,6 +317,7 @@ class TN3270Driver(EnvironmentDriver):
             + bytes([TELNET_IAC, TELNET_EOR])
         )
         await self.write_raw(payload)
+        logger.info("l1_field_input_injected", layer="layer1", text=text, row=row, col=col, aid_name=aid_name)
         self._emit_event(
             RuntimeEventType.INPUT_TYPED,
             f"Typed text at ({row},{col}) and sent {aid_name}",

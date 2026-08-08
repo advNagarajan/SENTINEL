@@ -2,6 +2,10 @@
 import hashlib
 import time
 from typing import Optional
+import structlog
+
+logger = structlog.get_logger(__name__)
+
 
 from layer2.base import StateReducer
 from layer2.builder import ScreenObjectBuilder
@@ -90,6 +94,17 @@ class TN3270StateReducer(StateReducer):
             text_grid=raw_grid,
             metadata={"oia_status": som.oia_status},
         )
+
+        logger.info(
+            "l2_state_reduced",
+            layer="layer2",
+            runtime_id=runtime_id,
+            generation=generation,
+            screen_hash=screen_hash,
+            fields_count=len(fields_dict),
+            title=title,
+        )
+
 
         # 6. Compute ScreenDelta if previous_state exists
         delta: Optional[ScreenDelta] = None
