@@ -98,9 +98,17 @@ async def main_loop(config_path: str, interactive: bool) -> None:
             generation=generation,
         )
 
+        # Enforce sealed L2 -> L3 handoff contract validation
+        payload = reducer.reduce_payload(
+            reducer.build_object_model(reducer.parse_frame(await driver.read_frame())),
+            runtime_id=driver.runtime_id,
+            generation=generation,
+            validate=True,
+        )
         audit_logger.log_state(state)
         render_screen_view(state, config)
         render_fields_summary(state)
+
 
 
         if interactive and hasattr(driver, "send_aid"):
