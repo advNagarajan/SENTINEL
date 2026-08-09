@@ -23,7 +23,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["layer1/tests", "layer2/tests"]
+testpaths = ["layer1/tests", "layer2/tests", "tests/integration"]
 
 [tool.mypy]
 python_version = "3.11"
