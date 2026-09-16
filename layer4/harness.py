@@ -2,6 +2,7 @@
 
 Presents compiled Layer 3 tool schemas, renders real-time terminal views,
 executes agent tool invocations, and audits downward action execution.
+Optionally emits state transitions to the Navigator microservice for graph construction.
 """
 import asyncio
 import json
@@ -16,6 +17,7 @@ from schemas.contracts import L2toL3HandoffPayload
 from schemas.events import RuntimeEvent
 from schemas.pipeline import TransportFrame
 from schemas.state import FieldEntry, RuntimeState, ScreenType, StabilityReport
+from services.navigator.emitter import NavigatorEmitter
 
 logger = structlog.get_logger(__name__)
 
@@ -77,7 +79,13 @@ def format_tools_catalog(tools: list[dict[str, Any]]) -> str:
 class LiveValidationHarness:
     """Interactive validation harness acting as Layer 4 for end-to-end action execution."""
 
-    def __init__(self, config_path: str = "configs/mainframe.toml", log_file: str = "logs/live_validation.jsonl"):
+    def __init__(
+        self,
+        config_path: str = "configs/mainframe.toml",
+        log_file: str = "logs/live_validation.jsonl",
+        navigator_url: Optional[str] = "http://localhost:8100",
+        target_name: str = "unknown",
+    ):
         self.config_path = config_path
         self.log_file = log_file
         self.audit_logger = AuditLogger(log_file=self.log_file)
@@ -89,6 +97,11 @@ class LiveValidationHarness:
         self.config = None
         self.gateway: Optional[AIToolGateway] = None
         self.connected = False
+
+        # Navigator microservice integration (fire-and-forget, optional)
+        self.navigator: Optional[NavigatorEmitter] = None
+        if navigator_url:
+            self.navigator = NavigatorEmitter(base_url=navigator_url, target_name=target_name)
 
     async def connect(self) -> None:
         """Initialize L1-L2-L3 pipeline and connect to target environment."""
@@ -174,15 +187,84 @@ class LiveValidationHarness:
 
     async def disconnect(self) -> None:
         """Close connection cleanly."""
+        if self.navigator:
+            await self.navigator.close()
         if self.driver and self.connected and hasattr(self.driver, "disconnect"):
             await self.driver.disconnect()
         self.connected = False
 
     def get_tools(self) -> list[dict[str, Any]]:
-        """Return compiled Layer 3 tool schemas for the agent."""
+        """Return compiled Layer 3 tool schemas + navigator prediction tool for the agent."""
         if not self.gateway:
             return []
-        return self.gateway.get_tools()
+        tools = self.gateway.get_tools()
+
+        # Inject unified navigator graph inspection tool alongside L3 tools
+        if self.navigator:
+            state = self.gateway.get_active_payload().state
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "view_navigation_graph",
+                    "description": (
+                        "Inspect the screen navigation graph to discover reachable screens, plan paths, "
+                        "search known screens, view local topology, or execute custom graph queries. "
+                        "Modes: 'predict' (outgoing transitions & probabilities from current screen), "
+                        "'neighbors' (N-hop local map around a screen), "
+                        "'path' (shortest navigation sequence to a target screen), "
+                        "'search' (find screens by title keyword or field name), "
+                        "'stats' (global summary of graph screens and routes), "
+                        "'cypher' (arbitrary read-only Cypher query)."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "mode": {
+                                "type": "string",
+                                "enum": ["predict", "neighbors", "path", "search", "stats", "cypher"],
+                                "description": "Inspection mode for viewing the navigation graph.",
+                            },
+                            "screen_hash": {
+                                "type": "string",
+                                "description": (
+                                    f"Source screen hash for 'predict' or 'neighbors' mode. "
+                                    f"Defaults to active screen: '{state.screen_hash}'"
+                                ),
+                            },
+                            "to_hash": {
+                                "type": "string",
+                                "description": "Target destination screen hash (required for 'path' mode).",
+                            },
+                            "from_hash": {
+                                "type": "string",
+                                "description": (
+                                    f"Starting screen hash for 'path' mode. "
+                                    f"Defaults to active screen: '{state.screen_hash}'"
+                                ),
+                            },
+                            "depth": {
+                                "type": "integer",
+                                "description": "Exploration hop depth for 'neighbors' mode (1-5, default 1).",
+                            },
+                            "query": {
+                                "type": "string",
+                                "description": "Search keyword for screen title or field names (for 'search' mode).",
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "Maximum number of results to return (for 'search' mode, default 10).",
+                            },
+                            "cypher": {
+                                "type": "string",
+                                "description": "Read-only Cypher query (for 'cypher' mode, e.g. 'MATCH (s:Screen) RETURN s.title, s.visit_count LIMIT 5').",
+                            },
+                        },
+                        "required": ["mode"],
+                    },
+                },
+            })
+
+        return tools
 
     def present_tools(self) -> str:
         """Present current tool definitions to the agent as formatted JSON Schema."""
@@ -200,16 +282,130 @@ class LiveValidationHarness:
         print(format_fields_table(state) + "\n")
 
     async def step(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Agent action execution endpoint: dispatches tool call and returns structured observation JSON."""
+        """Agent action execution endpoint: dispatches tool call and returns structured observation JSON.
+
+        For state-changing actions, captures the pre-action screen state and emits a
+        transition event to the Navigator microservice after successful execution.
+        Graph inspection tools (view_navigation_graph, predict_navigation) are intercepted
+        here and handled by the navigator client without modifying terminal state.
+        """
         if not self.gateway:
             raise RuntimeError("Harness is not connected.")
+
+        # Intercept navigator graph inspection tool — handled entirely in L4
+        if tool_name == "view_navigation_graph":
+            if not self.navigator:
+                return {
+                    "success": False,
+                    "error": "NavigatorDisabled",
+                    "message": "Navigation graph service is not configured.",
+                }
+
+            current_hash = self.gateway.get_active_payload().state.screen_hash
+            mode = arguments.get("mode", "predict")
+
+            try:
+                if mode == "predict":
+                    target_hash = arguments.get("screen_hash") or current_hash
+                    res = await self.navigator.get_predictions(target_hash)
+                    if res is None:
+                        return {"success": False, "error": "NavigatorUnavailable", "message": "Navigation service unreachable."}
+                    return {"success": True, "mode": "predict", "result": res}
+
+                elif mode == "neighbors":
+                    target_hash = arguments.get("screen_hash") or current_hash
+                    depth = int(arguments.get("depth", 1))
+                    res = await self.navigator.get_neighbors(target_hash, depth=depth)
+                    if res is None:
+                        return {"success": False, "error": "NavigatorUnavailable", "message": "Navigation service unreachable."}
+                    return {"success": True, "mode": "neighbors", "result": res}
+
+                elif mode == "path":
+                    to_hash = arguments.get("to_hash")
+                    if not to_hash:
+                        return {"success": False, "error": "MissingArgument", "message": "'to_hash' is required for 'path' mode."}
+                    from_hash = arguments.get("from_hash") or current_hash
+                    res = await self.navigator.find_path(from_hash, to_hash)
+                    if res is None:
+                        return {"success": False, "error": "NavigatorUnavailable", "message": "Navigation service unreachable."}
+                    return {"success": True, "mode": "path", "result": res}
+
+                elif mode == "search":
+                    query = arguments.get("query")
+                    limit = int(arguments.get("limit", 10))
+                    res = await self.navigator.search_screens(query=query, limit=limit)
+                    if res is None:
+                        return {"success": False, "error": "NavigatorUnavailable", "message": "Navigation service unreachable."}
+                    return {"success": True, "mode": "search", "result": res}
+
+                elif mode == "stats":
+                    res = await self.navigator.get_stats()
+                    if res is None:
+                        return {"success": False, "error": "NavigatorUnavailable", "message": "Navigation service unreachable."}
+                    return {"success": True, "mode": "stats", "result": res}
+
+                elif mode == "cypher":
+                    cypher = arguments.get("cypher")
+                    if not cypher:
+                        return {"success": False, "error": "MissingArgument", "message": "'cypher' query is required for 'cypher' mode."}
+                    params = arguments.get("parameters")
+                    res = await self.navigator.query_cypher(cypher, parameters=params)
+                    if res is None:
+                        return {"success": False, "error": "NavigatorUnavailable", "message": "Navigation service unreachable."}
+                    if "error" in res:
+                        return {"success": False, "error": "CypherError", "message": res["error"]}
+                    return {"success": True, "mode": "cypher", "result": res}
+
+                else:
+                    return {
+                        "success": False,
+                        "error": "InvalidMode",
+                        "message": f"Unknown mode '{mode}'. Choose from: predict, neighbors, path, search, stats, cypher.",
+                    }
+            except Exception as e:
+                logger.warning("navigator_tool_execution_failed", error=str(e))
+                return {"success": False, "error": "NavigatorError", "message": str(e)}
+
+        # Legacy predict_navigation interception for backward compatibility
+        if tool_name == "predict_navigation" and self.navigator:
+            screen_hash = arguments.get("screen_hash") or self.gateway.get_active_payload().state.screen_hash
+            prediction = await self.navigator.get_predictions(screen_hash)
+            if prediction is not None:
+                return {"success": True, "predictions": prediction}
+            else:
+                return {
+                    "success": False,
+                    "error": "NavigatorUnavailable",
+                    "message": "Navigation graph service is not reachable. Proceed without predictions.",
+                }
+
+        # Capture pre-action state for navigator transition tracking (exclude read-only inspection tools)
+        read_only_tools = {"get_screen_state", "view_navigation_graph", "predict_navigation"}
+        if self.navigator and tool_name not in read_only_tools:
+            self.navigator.capture_pre_state(self.gateway.get_active_payload().state)
 
         start_time = time.time()
         result = await self.gateway.execute_tool(tool_name, arguments)
         duration_ms = (time.time() - start_time) * 1000.0
 
         if result.get("success"):
-            self.audit_logger.log_state(self.gateway.get_active_payload().state)
+            new_state = self.gateway.get_active_payload().state
+            self.audit_logger.log_state(new_state)
+
+            # Emit transition to navigator (fire-and-forget, errors are logged not raised)
+            if self.navigator and tool_name not in read_only_tools:
+
+                try:
+                    runtime_id = getattr(self.driver, "runtime_id", "unknown") if self.driver else "unknown"
+                    await self.navigator.emit_transition(
+                        new_state=new_state,
+                        tool_name=tool_name,
+                        arguments=arguments,
+                        runtime_id=runtime_id,
+                        latency_ms=duration_ms,
+                    )
+                except Exception as e:
+                    logger.warning("navigator_emission_error", error=str(e))
 
         result["latency_ms"] = round(duration_ms, 2)
         return result
