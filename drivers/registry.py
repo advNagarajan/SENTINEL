@@ -51,3 +51,32 @@ class DriverRegistry:
             return driver, reducer, stability, config
         else:
             raise NotImplementedError(f"Driver type '{driver_type}' is not registered yet.")
+
+    @classmethod
+    def create_action_lowerer(cls, driver_type: str = "tn3270"):
+        """Instantiate target-specific ActionLowerer."""
+        if driver_type.lower() == "tn3270":
+            from layer2.action_lowerer import TN3270ActionLowerer
+            return TN3270ActionLowerer()
+        else:
+            raise NotImplementedError(f"Action lowerer for '{driver_type}' is not registered yet.")
+
+    @classmethod
+    def create_gateway(cls, config_path: str):
+        """Instantiate complete L1-L2-L3 pipeline and return (driver, gateway, config)."""
+        from layer3.dispatcher import ActionDispatcher
+        from layer3.gateway import AIToolGateway
+        from schemas.contracts import L2toL3HandoffPayload
+
+        driver, reducer, stability, config = cls.create_target(config_path)
+        driver_type = config.get("target", {}).get("driver", "tn3270")
+        lowerer = cls.create_action_lowerer(driver_type)
+
+        dispatcher = ActionDispatcher(
+            driver=driver,
+            reducer=reducer,
+            action_lowerer=lowerer,
+            stability_engine=stability,
+        )
+
+        return driver, reducer, stability, lowerer, dispatcher, config

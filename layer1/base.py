@@ -45,15 +45,13 @@ class EnvironmentDriver(ABC):
         """Inject raw command/keystroke bytes into the target."""
         pass
 
-    @abstractmethod
     async def send_aid(self, aid_name: str, cursor_row: int = 0, cursor_col: int = 0) -> None:
-        """Send AID/action key to target environment."""
-        pass
+        """Send AID/action key to target environment (if supported by driver)."""
+        raise NotImplementedError(f"{self.__class__.__name__} does not support send_aid")
 
-    @abstractmethod
     async def send_field_input(self, text: str, row: int, col: int, aid_name: str = "ENTER") -> None:
-        """Type text into specific grid position and trigger action key."""
-        pass
+        """Type text into specific grid position and trigger action key (if supported by driver)."""
+        raise NotImplementedError(f"{self.__class__.__name__} does not support send_field_input")
 
     @abstractmethod
     async def health_check(self) -> bool:

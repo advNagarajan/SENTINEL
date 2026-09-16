@@ -44,3 +44,17 @@ class StateReducer(ABC):
         if validate:
             validate_l2_to_l3_contract(payload)
         return payload
+
+
+class ActionLowerer(ABC):
+    """Abstract interface for translating environment-agnostic CanonicalActionIntent into driver-specific execution."""
+
+    @abstractmethod
+    async def lower_and_execute(
+        self,
+        intent: Any,  # CanonicalActionIntent
+        driver: Any,  # EnvironmentDriver
+        active_state: RuntimeState,
+    ) -> Any:  # ActionResult
+        """Translate abstract action intent into protocol-level primitives and execute on driver."""
+        pass

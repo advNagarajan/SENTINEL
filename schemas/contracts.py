@@ -69,3 +69,61 @@ def validate_l2_to_l3_contract(payload: L2toL3HandoffPayload) -> None:
 
     if state.stability_report.is_stable != state.is_stable:
         raise ContractValidationError("Mismatch between stability_report.is_stable and state.is_stable.")
+
+
+def validate_l3_to_l2_action(intent: Any, active_state: RuntimeState) -> None:
+    """Strict contract validator ensuring downward CanonicalActionIntent is valid for active state.
+    
+    Invariants checked:
+    1. Intent generation token and generation number must strictly match active RuntimeState.
+    2. Any targeted field_id must exist in active_state and must NOT be protected.
+    3. Input value length cannot exceed target field length.
+    4. Action ID must be non-empty if triggering an action.
+    """
+    from schemas.actions import ActionType
+
+    if not intent.ticket_id:
+        raise ContractValidationError("Action intent must include a non-empty ticket_id.")
+
+    if intent.generation != active_state.generation or intent.generation_token != active_state.generation_token:
+        raise ContractValidationError(
+            f"Stale action dispatch: intent token '{intent.generation_token}' (gen {intent.generation}) "
+            f"does not match active state token '{active_state.generation_token}' (gen {active_state.generation})."
+        )
+
+    # Helper to find field by key or field_id
+    def find_field(fid: str):
+        if fid in active_state.fields:
+            return active_state.fields[fid]
+        for f in active_state.fields.values():
+            if f.field_id == fid:
+                return f
+        return None
+
+    if intent.intent_type in (ActionType.FILL_FIELD, ActionType.FILL_AND_SUBMIT):
+        if intent.field_id:
+            target = find_field(intent.field_id)
+            if not target:
+                raise ContractValidationError(f"Target field_id '{intent.field_id}' not found on active screen.")
+            if target.protected:
+                raise ContractValidationError(f"Target field '{intent.field_id}' is protected (read-only).")
+            if intent.value is not None and len(intent.value) > target.length:
+                raise ContractValidationError(
+                    f"Value length ({len(intent.value)}) exceeds maximum length ({target.length}) for field '{intent.field_id}'."
+                )
+
+        if intent.fields:
+            for fid, val in intent.fields.items():
+                target = find_field(fid)
+                if not target:
+                    raise ContractValidationError(f"Target field '{fid}' not found in screen fields.")
+                if target.protected:
+                    raise ContractValidationError(f"Target field '{fid}' is protected (read-only).")
+                if len(val) > target.length:
+                    raise ContractValidationError(
+                        f"Value length ({len(val)}) exceeds maximum length ({target.length}) for field '{fid}'."
+                    )
+
+    if intent.intent_type in (ActionType.TRIGGER_ACTION, ActionType.FILL_AND_SUBMIT):
+        if not intent.action_id or not isinstance(intent.action_id, str):
+            raise ContractValidationError("Action intent requires a valid non-empty action_id string.")

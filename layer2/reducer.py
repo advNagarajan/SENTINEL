@@ -51,6 +51,7 @@ class TN3270StateReducer(StateReducer):
             if key_name in fields_dict:
                 key_name = f"{key_name}_{idx}"
 
+            clean_slug = key_name.strip().lower().replace(" ", "_").replace(":", "").replace("/", "_")
             fields_dict[key_name] = FieldEntry(
                 label=key_name,
                 value=f.value,
@@ -58,6 +59,7 @@ class TN3270StateReducer(StateReducer):
                 col=f.start_col,
                 length=f.length,
                 protected=f.protected,
+                field_id=f"fld_{clean_slug}",
                 hidden=f.hidden,
                 numeric=f.numeric,
             )
@@ -76,6 +78,13 @@ class TN3270StateReducer(StateReducer):
             details={"oia_status": som.oia_status},
         )
 
+        # 6. Standard 3270 action set available on screen
+        standard_3270_actions = [
+            "ENTER", "CLEAR", "PA1", "PA2", "PA3",
+            "PF1", "PF2", "PF3", "PF4", "PF5", "PF6",
+            "PF7", "PF8", "PF9", "PF10", "PF11", "PF12",
+        ]
+
         state = RuntimeState(
             runtime_id=runtime_id,
             screen_type=ScreenType.TEXT_GRID,
@@ -92,6 +101,7 @@ class TN3270StateReducer(StateReducer):
             cursor={"row": som.cursor[0], "col": som.cursor[1]},
             screen_size={"rows": self.rows, "cols": self.cols},
             text_grid=raw_grid,
+            available_actions=standard_3270_actions,
             metadata={"oia_status": som.oia_status},
         )
 

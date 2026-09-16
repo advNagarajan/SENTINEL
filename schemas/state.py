@@ -21,8 +21,14 @@ class FieldEntry:
     col: int
     length: int
     protected: bool
+    field_id: str = ""
     hidden: bool = False
     numeric: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.field_id:
+            clean_label = self.label.strip().lower().replace(" ", "_") if self.label else f"r{self.row}_c{self.col}"
+            self.field_id = f"fld_{clean_label}"
 
 
 @dataclass
@@ -55,11 +61,17 @@ class RuntimeState:
     cursor: dict[str, int] = field(default_factory=lambda: {"row": 0, "col": 0})
     screen_size: dict[str, int] = field(default_factory=lambda: {"rows": 24, "cols": 80})
     text_grid: list[str] = field(default_factory=list)
+    available_actions: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.text_grid and self.raw_grid:
             self.text_grid = self.raw_grid
+
+    @property
+    def generation_token(self) -> str:
+        short_hash = self.screen_hash[:8] if self.screen_hash else "nohash"
+        return f"gen_{self.generation}_{short_hash}"
 
 
 @dataclass
