@@ -75,7 +75,7 @@ async def test_tn3270_driver_lifecycle():
     assert await driver.health_check() is False
 
     await driver.freeze()
-    assert driver._frozen is True
+    assert driver._frozen
 
     await driver.unfreeze()
-    assert driver._frozen is False
+    assert not driver._frozen
