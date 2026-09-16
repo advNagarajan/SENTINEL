@@ -36,9 +36,8 @@ class AIToolGateway:
         If it's an action tool, dispatches downward to L2/L1, waits for stability, updates state,
         and returns the result.
         """
-        # Inspection tool (does not modify state)
+        # Inspection tool (does not modify state, purely returns semantic state and tools)
         if name == "get_screen_state":
-            include_grid = arguments.get("include_raw_grid", False)
             state = self.active_payload.state
             fields_summary = {
                 f.field_id: {
@@ -50,7 +49,7 @@ class AIToolGateway:
                 }
                 for f in state.fields.values()
             }
-            res: dict[str, Any] = {
+            return {
                 "success": True,
                 "generation": state.generation,
                 "generation_token": state.generation_token,
@@ -58,10 +57,8 @@ class AIToolGateway:
                 "cursor": state.cursor,
                 "is_stable": state.is_stable,
                 "fields": fields_summary,
+                "available_tools": self.get_tools(),
             }
-            if include_grid:
-                res["raw_grid"] = state.raw_grid
-            return res
 
         # Downward action tool
         try:
@@ -89,6 +86,7 @@ class AIToolGateway:
                     f"Successfully executed '{name}'. Target transitioned to generation #{new_state.generation} "
                     f"('{new_state.title or 'N/A'}')."
                 ),
+                "available_tools": self.get_tools(),
             }
 
         except ContractValidationError as cve:

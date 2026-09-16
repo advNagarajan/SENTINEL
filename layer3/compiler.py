@@ -134,21 +134,15 @@ class ToolCompiler:
             },
         })
 
-        # 4. State Inspection Tool
+        # 4. State Inspection Tool (purely semantic fields and status, zero raw ASCII rendering)
         tools.append({
             "type": "function",
             "function": {
                 "name": "get_screen_state",
-                "description": "Inspect the active screen grid, cursor position, and extracted fields without modifying anything.",
+                "description": "Inspect extracted semantic fields, current title, and screen status without modifying anything.",
                 "parameters": {
                     "type": "object",
-                    "properties": {
-                        "include_raw_grid": {
-                            "type": "boolean",
-                            "description": "If true, includes full ASCII 2D text grid in the response.",
-                            "default": False,
-                        },
-                    },
+                    "properties": {},
                 },
             },
         })
