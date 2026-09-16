@@ -10,7 +10,7 @@ from schemas.state import FieldEntry, RuntimeState, ScreenType, StabilityReport
 
 @pytest.fixture
 def sample_state():
-    grid = [" " * 80 for _ in range(24)]
+    grid: list[str] = [" " * 80 for _ in range(24)]
     fields = {
         "userid": FieldEntry(label="userid", value="", row=10, col=20, length=8, protected=False, field_id="fld_userid"),
         "password": FieldEntry(label="password", value="", row=11, col=20, length=8, protected=False, field_id="fld_password"),
@@ -95,6 +95,7 @@ async def test_action_lowerer_rejects_protected_field(sample_state):
 
     result = await lowerer.lower_and_execute(intent, mock_driver, sample_state)
     assert result.success is False
+    assert result.error_message is not None
     assert "protected" in result.error_message
     assert not mock_driver.write_raw.called
 
@@ -115,5 +116,6 @@ async def test_action_lowerer_rejects_stale_generation(sample_state):
 
     result = await lowerer.lower_and_execute(intent, mock_driver, sample_state)
     assert result.success is False
+    assert result.error_message is not None
     assert "Stale action dispatch" in result.error_message
     assert not mock_driver.write_raw.called

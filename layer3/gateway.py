@@ -50,7 +50,7 @@ class AIToolGateway:
                 }
                 for f in state.fields.values()
             }
-            res = {
+            res: dict[str, Any] = {
                 "success": True,
                 "generation": state.generation,
                 "generation_token": state.generation_token,

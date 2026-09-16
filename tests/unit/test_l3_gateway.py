@@ -11,7 +11,7 @@ from schemas.state import FieldEntry, RuntimeState, ScreenType, StabilityReport
 
 @pytest.fixture
 def mainframe_payload():
-    grid = [" " * 80 for _ in range(24)]
+    grid: list[str] = [" " * 80 for _ in range(24)]
     fields = {
         "command": FieldEntry(label="command", value="", row=20, col=10, length=40, protected=False, field_id="fld_command"),
         "header": FieldEntry(label="header", value="MVS SYSTEM CONSOLE", row=0, col=20, length=20, protected=True, field_id="fld_header"),
@@ -37,7 +37,7 @@ def mainframe_payload():
 @pytest.fixture
 def freedos_payload():
     """Simulated FreeDOS 80x25 command prompt state to verify L3 is 100% environment-independent."""
-    grid = [" " * 80 for _ in range(25)]
+    grid: list[str] = [" " * 80 for _ in range(25)]
     grid[0] = "FreeDOS Kernel version 1.3"
     grid[2] = "C:\\>"
     fields = {

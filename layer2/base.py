@@ -1,9 +1,12 @@
-"""Abstract base class for State Reducers in Layer 2 with explicit contract validation."""
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import TYPE_CHECKING, Any, Optional
 from schemas.contracts import L2toL3HandoffPayload, validate_l2_to_l3_contract
 from schemas.pipeline import Decoded3270Frame, ScreenObjectModel, TransportFrame
 from schemas.state import RuntimeState, ScreenDelta
+
+if TYPE_CHECKING:
+    from layer1.base import EnvironmentDriver
+    from schemas.actions import ActionResult, CanonicalActionIntent
 
 
 class StateReducer(ABC):
@@ -52,9 +55,9 @@ class ActionLowerer(ABC):
     @abstractmethod
     async def lower_and_execute(
         self,
-        intent: Any,  # CanonicalActionIntent
-        driver: Any,  # EnvironmentDriver
+        intent: Any,
+        driver: Any,
         active_state: RuntimeState,
-    ) -> Any:  # ActionResult
+    ) -> Any:
         """Translate abstract action intent into protocol-level primitives and execute on driver."""
         pass
