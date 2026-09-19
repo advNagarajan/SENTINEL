@@ -13,6 +13,7 @@ import structlog
 from drivers.registry import DriverRegistry
 from layer3.gateway import AIToolGateway
 from layer4.audit_log import AuditLogger
+from layer4.session import SessionBootstrapper
 from schemas.contracts import L2toL3HandoffPayload
 from schemas.events import RuntimeEvent
 from schemas.pipeline import TransportFrame
@@ -96,6 +97,7 @@ class LiveValidationHarness:
         self.dispatcher = None
         self.config = None
         self.gateway: Optional[AIToolGateway] = None
+        self.bootstrapper: Optional[SessionBootstrapper] = None
         self.connected = False
 
         # Navigator microservice integration (fire-and-forget, optional)
@@ -104,7 +106,7 @@ class LiveValidationHarness:
             self.navigator = NavigatorEmitter(base_url=navigator_url, target_name=target_name)
 
     async def connect(self) -> None:
-        """Initialize L1-L2-L3 pipeline and connect to target environment."""
+        """Initialize L1-L2-L3 pipeline, connect, and optionally bootstrap session."""
         (
             self.driver,
             self.reducer,
@@ -123,12 +125,14 @@ class LiveValidationHarness:
         await self.driver.connect()
         self.connected = True
 
-        # Settle on initial screen
-        state_1, _ = await self.stability.wait_until_stable(
+        # Settle session via SessionBootstrapper
+        session_cfg = self.config.get("session", {}) if isinstance(self.config, dict) else {}
+        self.bootstrapper = SessionBootstrapper(session_cfg)
+
+        state_1, _ = await self.bootstrapper.bootstrap(
             driver=self.driver,
             reducer=self.reducer,
-            runtime_id=self.driver.runtime_id,
-            generation=1,
+            stability=self.stability,
         )
 
         initial_payload = L2toL3HandoffPayload(state=state_1)
@@ -188,9 +192,19 @@ class LiveValidationHarness:
         self.audit_logger.log_state(state_1)
 
     async def disconnect(self) -> None:
-        """Close connection cleanly."""
+        """Close connection cleanly with optional automated session teardown."""
         if self.navigator:
             await self.navigator.close()
+        if self.connected and self.bootstrapper and self.active_state:
+            try:
+                await self.bootstrapper.teardown(
+                    driver=self.driver,
+                    reducer=self.reducer,
+                    stability=self.stability,
+                    active_state=self.active_state,
+                )
+            except Exception as e:
+                logger.warning("session_teardown_error", error=str(e))
         if self.driver and self.connected and hasattr(self.driver, "disconnect"):
             await self.driver.disconnect()
         self.connected = False

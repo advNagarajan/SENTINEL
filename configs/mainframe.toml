@@ -21,3 +21,10 @@ quiescence_ms    = 150
 [logging]
 level    = "INFO"
 log_file = "logs/mainframe_audit.jsonl"
+
+[session]
+auto_login  = true
+auto_logout = true
+entrypoint  = "ispf"
+user        = "herc01"
+password    = "cul8tr"
