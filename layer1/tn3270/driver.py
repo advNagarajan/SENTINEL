@@ -100,10 +100,19 @@ class TN3270Driver(EnvironmentDriver):
         return self._is_connected and self._writer is not None and not self._writer.is_closing()
 
     async def read_frame(self) -> TransportFrame:
-        """Read next framed 3270 stream record via upward reader."""
+        """Read next framed 3270 stream record via upward reader, auto-responding to WSF Queries."""
         if not self._reader:
             raise RuntimeError("TN3270 driver is not connected")
-        return await self.upward.read_frame(self._reader, self._emit_event)
+
+        while True:
+            frame = await self.upward.read_frame(self._reader, self._emit_event)
+            # Check for WSF Read Partition (Query) command: 0xF3 0x00 0x05 0x01 ...
+            if self._writer and frame.raw_payload.startswith(b"\xf3\x00\x05\x01"):
+                logger.info("l1_wsf_query_intercepted", layer="layer1", action="auto_responding_query_reply")
+                reply = self.downward.build_query_reply_packet()
+                await self.downward.send_packet(self._writer, reply)
+                continue
+            return frame
 
     async def write_raw(self, data: bytes) -> None:
         """Inject raw bytes into the 3270 host connection."""

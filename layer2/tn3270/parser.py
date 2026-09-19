@@ -61,14 +61,16 @@ class TN3270StreamParser:
                 wcc_byte = raw[pos]
                 pos += 1
 
+        payload_start = pos
+        current_buf_addr = 0
+
         while pos < len(raw):
             b = raw[pos]
 
             if b == ORDER_SF and pos + 1 < len(raw):
                 attr_byte = raw[pos + 1]
-                orders.append({"type": "SF", "attr": attr_byte, "offset": pos})
-                text_buf.append(b)
-                text_buf.append(attr_byte)
+                orders.append({"type": "SF", "attr": attr_byte, "offset": pos, "address": current_buf_addr})
+                current_buf_addr += 1
                 pos += 2
             elif b == ORDER_SFE and pos + 1 < len(raw):
                 count = raw[pos + 1]
@@ -78,16 +80,18 @@ class TN3270StreamParser:
                     if idx + 1 < len(raw):
                         pairs.append((raw[idx], raw[idx + 1]))
                         idx += 2
-                orders.append({"type": "SFE", "pairs": pairs, "offset": pos})
+                orders.append({"type": "SFE", "pairs": pairs, "offset": pos, "address": current_buf_addr})
+                current_buf_addr += 1
                 pos = idx
             elif b == ORDER_SBA and pos + 2 < len(raw):
                 b1, b2 = raw[pos + 1], raw[pos + 2]
                 addr = ((b1 & 0x3F) << 6) | (b2 & 0x3F)
                 orders.append({"type": "SBA", "address": addr, "offset": pos})
+                current_buf_addr = addr
                 pos += 3
             elif b == ORDER_IC:
-                orders.append({"type": "IC", "offset": pos})
-                cursor_addr = len(text_buf)
+                orders.append({"type": "IC", "offset": pos, "address": current_buf_addr})
+                cursor_addr = current_buf_addr
                 pos += 1
             elif b == ORDER_SA and pos + 2 < len(raw):
                 orders.append({"type": "SA", "attr_type": raw[pos + 1], "attr_val": raw[pos + 2], "offset": pos})
@@ -96,17 +100,24 @@ class TN3270StreamParser:
                 b1, b2, char_byte = raw[pos + 1], raw[pos + 2], raw[pos + 3]
                 target_addr = ((b1 & 0x3F) << 6) | (b2 & 0x3F)
                 orders.append({"type": "RA", "target_address": target_addr, "char": char_byte, "offset": pos})
+                current_buf_addr = target_addr
                 pos += 4
             elif b == ORDER_EUA and pos + 2 < len(raw):
+                b1, b2 = raw[pos + 1], raw[pos + 2]
+                target_addr = ((b1 & 0x3F) << 6) | (b2 & 0x3F)
+                current_buf_addr = target_addr
                 pos += 3
+            elif b == ORDER_PT:
+                orders.append({"type": "PT", "offset": pos})
+                pos += 1
             else:
-                text_buf.append(b)
+                current_buf_addr += 1
                 pos += 1
 
         return Decoded3270Frame(
             command=cmd,
             orders=orders,
-            raw_text_ebcdic=bytes(text_buf),
+            raw_text_ebcdic=raw[payload_start:],
             oia_byte=oia_byte,
             cursor_address=cursor_addr,
             wcc=wcc_byte,

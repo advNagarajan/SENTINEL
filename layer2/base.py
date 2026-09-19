@@ -80,6 +80,7 @@ class StabilityEngine(ABC):
         reducer: Any,
         runtime_id: str,
         generation: int,
+        previous_state: Optional[RuntimeState] = None,
     ) -> tuple[RuntimeState, StabilityReport]:
         """Poll driver and state reducer until stability criteria are met."""
         pass

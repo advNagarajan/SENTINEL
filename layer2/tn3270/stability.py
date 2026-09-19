@@ -31,6 +31,7 @@ class OIAStabilityEngine(StabilityEngine):
         reducer: Any,
         runtime_id: str,
         generation: int,
+        previous_state: Optional[RuntimeState] = None,
     ) -> tuple[RuntimeState, StabilityReport]:
         """Poll driver and state reducer until multi-signal stability criteria are met."""
         start_time = time.time()
@@ -45,9 +46,13 @@ class OIAStabilityEngine(StabilityEngine):
             iterations += 1
             frame = await driver.read_frame()
             if frame.raw_payload:
+                # If frame is an intermediate screen-clearing frame (11 bytes), skip it and drain next
+                if len(frame.raw_payload) == 11 and frame.raw_payload.startswith(b"\xf5\xc3\x11\x5d\x7f"):
+                    continue
+
                 decoded = reducer.parse_frame(frame)
                 som = reducer.build_object_model(decoded)
-                state, _ = reducer.reduce_state(som, runtime_id, generation)
+                state, _ = reducer.reduce_state(som, runtime_id, generation, previous_state=previous_state)
                 last_state = state
             elif last_state is not None:
                 state = last_state

@@ -10,7 +10,7 @@ from layer1.base import EnvironmentDriver
 from layer2.base import ActionLowerer, StateReducer
 from schemas.actions import ActionResult, ActionType, CanonicalActionIntent
 from schemas.contracts import ContractValidationError, L2toL3HandoffPayload, validate_l3_to_l2_action
-from schemas.state import RuntimeState
+from schemas.state import RuntimeState, ScreenDelta
 
 logger = structlog.get_logger(__name__)
 
@@ -113,19 +113,36 @@ class ActionDispatcher:
             reducer=self.reducer,
             runtime_id=self.driver.runtime_id,
             generation=next_generation,
+            previous_state=active_state,
         )
 
-        # 5. Build sealed L2 -> L3 handoff payload for the new generation
-        raw_frame = await self.driver.read_frame()
-        som = self.reducer.build_object_model(self.reducer.parse_frame(raw_frame)) if raw_frame.raw_payload else None
-        
-        # Calculate screen delta against previous state
-        _, delta = self.reducer.reduce_state(
-            som=som or self.reducer.build_object_model(self.reducer.parse_frame(raw_frame)),
-            runtime_id=self.driver.runtime_id,
-            generation=next_generation,
-            previous_state=active_state,
-        ) if som else (new_state, None)
+        # 5. Build sealed L2 -> L3 handoff payload with ScreenDelta
+        changed_fields: dict[str, dict[str, str]] = {}
+        for name, field_entry in new_state.fields.items():
+            prev_field = active_state.fields.get(name)
+            if prev_field and prev_field.value != field_entry.value:
+                changed_fields[name] = {"old": prev_field.value, "new": field_entry.value}
+            elif not prev_field:
+                changed_fields[name] = {"old": "", "new": field_entry.value}
+
+        cursor_moved = (
+            active_state.cursor["row"] != new_state.cursor["row"]
+            or active_state.cursor["col"] != new_state.cursor["col"]
+        )
+        text_changed = (active_state.screen_hash != new_state.screen_hash)
+
+        delta = ScreenDelta(
+            generation_from=active_state.generation,
+            generation_to=new_state.generation,
+            screen_hash_from=active_state.screen_hash,
+            screen_hash_to=new_state.screen_hash,
+            changed_fields=changed_fields,
+            cursor_moved=cursor_moved,
+            cursor_from=(active_state.cursor["row"], active_state.cursor["col"]),
+            cursor_to=(new_state.cursor["row"], new_state.cursor["col"]),
+            text_changed=text_changed,
+            timestamp=time.time(),
+        )
 
         new_payload = L2toL3HandoffPayload(
             state=new_state,

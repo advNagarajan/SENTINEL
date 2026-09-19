@@ -82,6 +82,24 @@ class TN3270DownwardWriter:
         packet.extend([TELNET_IAC, TELNET_EOR])
         return bytes(packet)
 
+    @staticmethod
+    def build_query_reply_packet() -> bytes:
+        """Build standard 3270 Query Reply (Summary + Usable Area) packet with IAC EOR termination."""
+        summary_sf = bytes([0x00, 0x06, 0x81, 0x80, 0x80, 0x81])
+        usable_area_sf = bytes([
+            0x00, 0x17,  # Length 23
+            0x81,        # Query Reply SFID
+            0x81,        # QCODE: Usable Area
+            0x01, 0x00,  # 12/14-bit addressing
+            0x00, 0x50,  # Width = 80
+            0x00, 0x18,  # Height = 24
+            0x00, 0x01,  # Units: inches/mm
+            0x00, 0x00, 0x00, 0x00,  # Physical dimensions
+            0x00, 0x50, 0x00, 0x18,  # Character units
+            0x00, 0x00,  # Reserved
+        ])
+        return bytes([0x88]) + summary_sf + usable_area_sf + bytes([TELNET_IAC, TELNET_EOR])
+
     async def send_packet(
         self,
         writer: asyncio.StreamWriter,
