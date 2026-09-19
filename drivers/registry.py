@@ -5,9 +5,8 @@ import structlog
 
 from layer1.base import EnvironmentDriver
 from layer1.tn3270 import TN3270Driver
-from layer2.base import StateReducer
-from layer2.reducer import TN3270StateReducer
-from layer2.stability import OIAStabilityEngine
+from layer2.base import ActionLowerer, StateReducer
+from layer2.tn3270 import OIAStabilityEngine, TN3270ActionLowerer, TN3270StateReducer
 
 logger = structlog.get_logger(__name__)
 
@@ -35,7 +34,7 @@ class DriverRegistry:
             driver = TN3270Driver(
                 host=tn3270_cfg.get("host", "127.0.0.1"),
                 port=tn3270_cfg.get("port", 3270),
-                device_type=tn3270_cfg.get("device_type", "IBM-3278-2"),
+                device_type=tn3270_cfg.get("device_type", "IBM-3279-2-E"),
                 use_tls=tn3270_cfg.get("use_tls", False),
                 runtime_id=target_cfg.get("runtime_id", "mainframe_node_01"),
             )
@@ -53,16 +52,17 @@ class DriverRegistry:
             raise NotImplementedError(f"Driver type '{driver_type}' is not registered yet.")
 
     @classmethod
-    def create_action_lowerer(cls, driver_type: str = "tn3270"):
+    def create_action_lowerer(cls, driver_type: str = "tn3270") -> ActionLowerer:
         """Instantiate target-specific ActionLowerer."""
         if driver_type.lower() == "tn3270":
-            from layer2.action_lowerer import TN3270ActionLowerer
             return TN3270ActionLowerer()
         else:
             raise NotImplementedError(f"Action lowerer for '{driver_type}' is not registered yet.")
 
     @classmethod
-    def create_gateway(cls, config_path: str):
+    def create_gateway(
+        cls, config_path: str
+    ) -> Tuple[EnvironmentDriver, StateReducer, OIAStabilityEngine, ActionLowerer, Any, dict[str, Any]]:
         """Instantiate complete L1-L2-L3 pipeline and return (driver, gateway, config)."""
         from layer3.dispatcher import ActionDispatcher
         from layer3.gateway import AIToolGateway

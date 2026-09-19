@@ -1,13 +1,16 @@
 """Stage 2d: Modular Multi-Signal Stability Engine for TN3270 protocol determinism."""
 import asyncio
 import time
+from typing import Any
 import structlog
-from schemas.state import RuntimeState, StabilityReport
+
+from layer2.base import StabilityEngine
+from schemas.state import RuntimeState, ScreenType, StabilityReport
 
 logger = structlog.get_logger(__name__)
 
 
-class OIAStabilityEngine:
+class OIAStabilityEngine(StabilityEngine):
     """Modular Stability Engine fusing OIA status byte, socket quiescence, screen hash, cursor stability, and settling timers."""
 
     def __init__(
@@ -16,7 +19,7 @@ class OIAStabilityEngine:
         settle_ms: int = 100,
         max_wait_ms: int = 10000,
         quiescence_ms: int = 150,
-    ):
+    ) -> None:
         self.poll_interval_ms = poll_interval_ms
         self.settle_ms = settle_ms
         self.max_wait_ms = max_wait_ms
@@ -24,8 +27,8 @@ class OIAStabilityEngine:
 
     async def wait_until_stable(
         self,
-        driver,  # EnvironmentDriver
-        reducer,  # StateReducer
+        driver: Any,
+        reducer: Any,
         runtime_id: str,
         generation: int,
     ) -> tuple[RuntimeState, StabilityReport]:
@@ -66,7 +69,7 @@ class OIAStabilityEngine:
             if is_oia_ready and hash_stable_count >= 1:
                 # Apply short settling delay window
                 await asyncio.sleep(self.settle_ms / 1000.0)
-                
+
                 report = StabilityReport(
                     is_stable=True,
                     method="oia_multi_signal",
@@ -91,9 +94,7 @@ class OIAStabilityEngine:
                 )
                 return state, report
 
-
             await asyncio.sleep(self.poll_interval_ms / 1000.0)
-
 
         # Timeout reached — return state with is_stable=False
         report = StabilityReport(
@@ -104,7 +105,25 @@ class OIAStabilityEngine:
             iterations=iterations,
             details={"elapsed_ms": (time.time() - start_time) * 1000},
         )
-        state.stability_report = report
-        state.is_stable = False
+        if last_state is not None:
+            state = last_state
+            state.stability_report = report
+            state.is_stable = False
+        else:
+            blank_grid: list[str] = [" " * 80 for _ in range(24)]
+            state = RuntimeState(
+                runtime_id=runtime_id,
+                screen_type=ScreenType.TEXT_GRID,
+                is_stable=False,
+                confidence_score=0.0,
+                raw_grid=blank_grid,
+                title=None,
+                fields={},
+                status_line=None,
+                stability_report=report,
+                screen_hash="",
+                generation=generation,
+            )
+
         logger.warning("Stability engine timed out waiting for OIA host ready", elapsed_ms=(time.time() - start_time) * 1000)
         return state, report

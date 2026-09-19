@@ -2,7 +2,7 @@
 import asyncio
 import ssl
 import time
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 import structlog
 
 from layer1.base import EnvironmentDriver
@@ -22,10 +22,10 @@ class TN3270Driver(EnvironmentDriver):
         self,
         host: str = "127.0.0.1",
         port: int = 3270,
-        device_type: str = "IBM-3278-2",
+        device_type: str = "IBM-3279-2-E",
         use_tls: bool = False,
         runtime_id: str = "mainframe_node_01",
-    ):
+    ) -> None:
         self.host = host
         self.port = port
         self.device_type = device_type
@@ -50,7 +50,7 @@ class TN3270Driver(EnvironmentDriver):
     def add_event_listener(self, listener: Callable[[RuntimeEvent], None]) -> None:
         self._event_listeners.append(listener)
 
-    def _emit_event(self, event_type: RuntimeEventType, message: str, details: Optional[dict] = None) -> None:
+    def _emit_event(self, event_type: RuntimeEventType, message: str, details: Optional[dict[str, Any]] = None) -> None:
         event = RuntimeEvent(
             event_type=event_type,
             runtime_id=self._runtime_id,

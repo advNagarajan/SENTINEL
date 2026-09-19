@@ -1,7 +1,7 @@
 """Upward / Ingress reader and Telnet state machine for TN3270 stream records."""
 import asyncio
 import time
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 import structlog
 
 from layer1.tn3270.constants import (
@@ -26,7 +26,7 @@ logger = structlog.get_logger(__name__)
 class TN3270UpwardReader:
     """Handles Telnet option negotiations, stream buffering, and EOR framing into TransportFrames."""
 
-    def __init__(self, device_type: str = "IBM-3278-2"):
+    def __init__(self, device_type: str = "IBM-3279-2-E") -> None:
         self.device_type = device_type
         self.buffer = bytearray()
         self.frame_seq = 0
@@ -90,7 +90,7 @@ class TN3270UpwardReader:
     async def read_frame(
         self,
         reader: asyncio.StreamReader,
-        emit_event: Optional[Callable[[RuntimeEventType, str, dict], None]] = None,
+        emit_event: Optional[Callable[[RuntimeEventType, str, Optional[dict[str, Any]]], None]] = None,
     ) -> TransportFrame:
         """Read next framed 3270 stream record ending with IAC EOR or EOF."""
         data_acc = bytearray(self.buffer)

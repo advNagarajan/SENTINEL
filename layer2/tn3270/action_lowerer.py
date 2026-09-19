@@ -1,4 +1,4 @@
-"""Layer 2 Action Lowerer translating CanonicalActionIntent into protocol-level driver actions."""
+"""Layer 2 Action Lowerer translating CanonicalActionIntent into protocol-level driver actions for TN3270."""
 import time
 from typing import Any, Optional
 import structlog

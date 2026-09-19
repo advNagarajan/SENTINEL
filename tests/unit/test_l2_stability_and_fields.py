@@ -2,11 +2,13 @@
 import pytest
 from unittest.mock import AsyncMock
 
-from layer2.action_lowerer import TN3270ActionLowerer
-from layer2.builder import ScreenObjectBuilder
-from layer2.parser import TN3270StreamParser
-from layer2.reducer import TN3270StateReducer
-from layer2.stability import OIAStabilityEngine
+from layer2.tn3270 import (
+    OIAStabilityEngine,
+    ScreenObjectBuilder,
+    TN3270ActionLowerer,
+    TN3270StateReducer,
+    TN3270StreamParser,
+)
 from schemas.actions import ActionType, CanonicalActionIntent
 from schemas.pipeline import TransportFrame
 from schemas.state import FieldEntry, RuntimeState, ScreenType, StabilityReport

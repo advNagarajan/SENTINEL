@@ -6,7 +6,7 @@ import time
 from typing import Any, Optional
 from schemas.events import RuntimeEvent
 from schemas.pipeline import TransportFrame
-from schemas.state import RuntimeState, ScreenDelta, ScreenSnapshot
+from schemas.state import FieldEntry, RuntimeState, ScreenDelta, ScreenSnapshot
 
 
 class ContractValidationError(Exception):
@@ -92,7 +92,7 @@ def validate_l3_to_l2_action(intent: Any, active_state: RuntimeState) -> None:
         )
 
     # Helper to find field by key or field_id
-    def find_field(fid: str):
+    def find_field(fid: str) -> Optional[FieldEntry]:
         if fid in active_state.fields:
             return active_state.fields[fid]
         for f in active_state.fields.values():

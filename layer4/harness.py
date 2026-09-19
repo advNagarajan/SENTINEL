@@ -138,11 +138,13 @@ class LiveValidationHarness:
     async def connect_mock(self) -> None:
         """Initialize mock L1-L2-L3 pipeline for offline testing without a live emulator."""
         from unittest.mock import AsyncMock
-        from layer2.action_lowerer import TN3270ActionLowerer
-        from layer2.builder import ScreenObjectBuilder
-        from layer2.parser import TN3270StreamParser
-        from layer2.reducer import TN3270StateReducer
-        from layer2.stability import OIAStabilityEngine
+        from layer2.tn3270 import (
+            OIAStabilityEngine,
+            ScreenObjectBuilder,
+            TN3270ActionLowerer,
+            TN3270StateReducer,
+            TN3270StreamParser,
+        )
         from layer3.dispatcher import ActionDispatcher
 
         self.reducer = TN3270StateReducer(rows=24, cols=80)
@@ -192,6 +194,30 @@ class LiveValidationHarness:
         if self.driver and self.connected and hasattr(self.driver, "disconnect"):
             await self.driver.disconnect()
         self.connected = False
+
+    @property
+    def is_connected(self) -> bool:
+        """Check if harness is connected with an active gateway."""
+        return self.connected and self.gateway is not None
+
+    @property
+    def active_payload(self) -> Optional[L2toL3HandoffPayload]:
+        """Return the current active L2-to-L3 handoff payload if connected."""
+        if not self.gateway:
+            return None
+        return self.gateway.get_active_payload()
+
+    @property
+    def active_state(self) -> Optional[RuntimeState]:
+        """Return the current runtime screen state if connected."""
+        payload = self.active_payload
+        return payload.state if payload else None
+
+    @property
+    def generation_token(self) -> Optional[str]:
+        """Return the active generation token if connected."""
+        state = self.active_state
+        return state.generation_token if state else None
 
     def get_tools(self) -> list[dict[str, Any]]:
         """Return compiled Layer 3 tool schemas + navigator prediction tool for the agent."""

@@ -41,6 +41,10 @@ L4 Agent Command Interface:
 
 async def interactive_loop(harness: LiveValidationHarness, debug_render: bool = False) -> None:
     """REPL allowing interactive execution of Layer 3 tools purely through tool invocations."""
+    if not harness.gateway:
+        print("\n[!] Error: Harness gateway is not connected or initialized.")
+        return
+
     print_interactive_help()
     print("\n--- ACTIVE L3 TOOLS PRESENTED TO AGENT ---")
     print(harness.present_tools())
@@ -73,7 +77,11 @@ async def interactive_loop(harness: LiveValidationHarness, debug_render: bool = 
             print(json.dumps(obs, indent=2))
         elif cmd == "act" and len(parts) >= 2:
             action_id = parts[1].upper()
-            gen_token = harness.gateway.get_active_payload().state.generation_token
+            gateway = harness.gateway
+            if not gateway:
+                print("\n[!] Error: Harness is not connected.")
+                break
+            gen_token = gateway.get_active_payload().state.generation_token
             obs = await harness.step("trigger_action", {
                 "generation_token": gen_token,
                 "action_id": action_id,
@@ -90,7 +98,11 @@ async def interactive_loop(harness: LiveValidationHarness, debug_render: bool = 
                 action_key = val_tokens[-1].split("=")[1].upper()
                 val_tokens = val_tokens[:-1]
             value = " ".join(val_tokens)
-            gen_token = harness.gateway.get_active_payload().state.generation_token
+            gateway = harness.gateway
+            if not gateway:
+                print("\n[!] Error: Harness is not connected.")
+                break
+            gen_token = gateway.get_active_payload().state.generation_token
             obs = await harness.step("set_field_and_submit", {
                 "generation_token": gen_token,
                 "field_id": field_id,

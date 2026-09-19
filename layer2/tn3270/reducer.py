@@ -1,4 +1,4 @@
-"""Stage 2c: State Reducer for producing canonical RuntimeState and computing ScreenDeltas."""
+"""Stage 2c: State Reducer for producing canonical RuntimeState and computing ScreenDeltas for TN3270."""
 import hashlib
 import time
 from typing import Optional
@@ -6,18 +6,17 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-
 from layer2.base import StateReducer
-from layer2.builder import ScreenObjectBuilder
-from layer2.parser import TN3270StreamParser
+from layer2.tn3270.builder import ScreenObjectBuilder
+from layer2.tn3270.parser import TN3270StreamParser
 from schemas.pipeline import Decoded3270Frame, ScreenObjectModel, TransportFrame
 from schemas.state import FieldEntry, RuntimeState, ScreenDelta, ScreenType, StabilityReport
 
 
 class TN3270StateReducer(StateReducer):
-    """Full implementation of Layer 2 State Reducer pipeline."""
+    """Full implementation of Layer 2 State Reducer pipeline for TN3270."""
 
-    def __init__(self, rows: int = 24, cols: int = 80):
+    def __init__(self, rows: int = 24, cols: int = 80) -> None:
         self.rows = rows
         self.cols = cols
         self.parser = TN3270StreamParser()
@@ -114,7 +113,6 @@ class TN3270StateReducer(StateReducer):
             fields_count=len(fields_dict),
             title=title,
         )
-
 
         # 6. Compute ScreenDelta if previous_state exists
         delta: Optional[ScreenDelta] = None

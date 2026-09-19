@@ -1,8 +1,6 @@
 """Unit tests for Layer 2 State Reduction pipeline stages."""
 import pytest
-from layer2.builder import ScreenObjectBuilder
-from layer2.parser import TN3270StreamParser
-from layer2.reducer import TN3270StateReducer
+from layer2.tn3270 import ScreenObjectBuilder, TN3270StateReducer, TN3270StreamParser
 from schemas.pipeline import Decoded3270Frame, TransportFrame
 from schemas.state import ScreenType
 

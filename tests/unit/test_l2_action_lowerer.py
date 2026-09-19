@@ -2,7 +2,7 @@
 import pytest
 from unittest.mock import AsyncMock
 
-from layer2.action_lowerer import TN3270ActionLowerer
+from layer2.tn3270 import TN3270ActionLowerer
 from schemas.actions import ActionType, CanonicalActionIntent
 from schemas.contracts import ContractValidationError
 from schemas.state import FieldEntry, RuntimeState, ScreenType, StabilityReport

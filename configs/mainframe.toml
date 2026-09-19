@@ -8,7 +8,7 @@ stability  = "oia_monitor"
 [tn3270]
 host        = "127.0.0.1"
 port        = 3270
-device_type = "IBM-3278-2"
+device_type = "IBM-3279-2-E"
 codepage    = "cp037"
 use_tls     = false
 

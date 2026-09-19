@@ -21,6 +21,7 @@ class Decoded3270Frame:
     raw_text_ebcdic: bytes
     oia_byte: bytes
     cursor_address: int = 0
+    wcc: Optional[int] = None
     timestamp: float = field(default_factory=time.time)
 
 

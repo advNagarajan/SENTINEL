@@ -1,6 +1,6 @@
 """Unit tests validating the L2 -> L3 handoff contract and invariant rules."""
 import pytest
-from layer2.reducer import TN3270StateReducer
+from layer2.tn3270 import TN3270StateReducer
 from schemas.contracts import ContractValidationError, L2toL3HandoffPayload, validate_l2_to_l3_contract
 from schemas.pipeline import TransportFrame
 from schemas.state import FieldEntry, RuntimeState, ScreenType, StabilityReport

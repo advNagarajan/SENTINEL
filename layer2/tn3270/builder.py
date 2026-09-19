@@ -1,4 +1,5 @@
 """Stage 2b: Screen Object Builder for constructing ScreenObjectModel from decoded frames."""
+from typing import Any
 import structlog
 from schemas.pipeline import Decoded3270Frame, Field3270, ScreenObjectModel
 
@@ -17,13 +18,13 @@ def ebcdic_to_ascii(byte_val: int) -> str:
 class ScreenObjectBuilder:
     """Builds semantic ScreenObjectModel (80x24 text grid, field objects, cursor) from Decoded3270Frame."""
 
-    def __init__(self, rows: int = 24, cols: int = 80):
+    def __init__(self, rows: int = 24, cols: int = 80) -> None:
         self.rows = rows
         self.cols = cols
 
     def build_object_model(self, decoded: Decoded3270Frame) -> ScreenObjectModel:
         grid: list[list[str]] = [[" " for _ in range(self.cols)] for _ in range(self.rows)]
-        attr_grid: list[list[dict]] = [[{"protected": True, "numeric": False, "hidden": False, "intense": False} for _ in range(self.cols)] for _ in range(self.rows)]
+        attr_grid: list[list[dict[str, Any]]] = [[{"protected": True, "numeric": False, "hidden": False, "intense": False} for _ in range(self.cols)] for _ in range(self.rows)]
         fields: list[Field3270] = []
 
         curr_addr = 0
@@ -42,11 +43,11 @@ class ScreenObjectBuilder:
             b = raw_ebcdic[pos]
             if b == 0x1D and pos + 1 < len(raw_ebcdic):  # ORDER_SF
                 # Finalize previous field if any
-                if field_bytes:
+                if field_bytes or (not field_attr["protected"] and curr_addr > field_start_addr):
                     f_start_r = field_start_addr // self.cols
                     f_start_c = field_start_addr % self.cols
-                    f_end_r = (curr_addr - 1) // self.cols
-                    f_end_c = (curr_addr - 1) % self.cols
+                    f_end_r = (curr_addr - 1) // self.cols if curr_addr > field_start_addr else f_start_r
+                    f_end_c = (curr_addr - 1) % self.cols if curr_addr > field_start_addr else f_start_c
                     val_str = "".join([ebcdic_to_ascii(x) for x in field_bytes]).strip()
 
                     fields.append(
@@ -55,7 +56,7 @@ class ScreenObjectBuilder:
                             start_col=f_start_c,
                             end_row=f_end_r,
                             end_col=f_end_c,
-                            length=len(field_bytes),
+                            length=max(1, len(field_bytes)),
                             protected=field_attr["protected"],
                             numeric=field_attr["numeric"],
                             hidden=field_attr["hidden"],
@@ -95,11 +96,11 @@ class ScreenObjectBuilder:
                 curr_addr += 1
 
         # Final field flush
-        if field_bytes and curr_addr <= (self.rows * self.cols):
+        if curr_addr <= (self.rows * self.cols) and (field_bytes or not field_attr["protected"]):
             f_start_r = field_start_addr // self.cols
             f_start_c = field_start_addr % self.cols
-            f_end_r = (curr_addr - 1) // self.cols
-            f_end_c = (curr_addr - 1) % self.cols
+            f_end_r = (curr_addr - 1) // self.cols if curr_addr > field_start_addr else f_start_r
+            f_end_c = (curr_addr - 1) % self.cols if curr_addr > field_start_addr else f_start_c
             val_str = "".join([ebcdic_to_ascii(x) for x in field_bytes]).strip()
             fields.append(
                 Field3270(
@@ -107,7 +108,7 @@ class ScreenObjectBuilder:
                     start_col=f_start_c,
                     end_row=f_end_r,
                     end_col=f_end_c,
-                    length=len(field_bytes),
+                    length=max(1, len(field_bytes)),
                     protected=field_attr["protected"],
                     numeric=field_attr["numeric"],
                     hidden=field_attr["hidden"],

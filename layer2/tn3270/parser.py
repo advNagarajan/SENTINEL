@@ -1,4 +1,5 @@
-"""Stage 2a: TN3270 Stream Parser for decoding 3270 orders and EBCDIC byte streams."""
+"""Stage 2a: TN3270 Stream Parser for decoding 3270 orders, WCC control bytes, and EBCDIC byte streams."""
+from typing import Any, Optional
 import structlog
 from schemas.pipeline import Decoded3270Frame, TransportFrame
 
@@ -8,6 +9,7 @@ logger = structlog.get_logger(__name__)
 CMD_WRITE = 0xF1
 CMD_ERASE_WRITE = 0xF5
 CMD_ERASE_WRITE_ALT = 0x7E
+CMD_WRITE_STRUCTURED_FIELD = 0xF3
 
 # 3270 Orders
 ORDER_SF = 0x1D    # Start Field
@@ -18,6 +20,8 @@ ORDER_IC = 0x13    # Insert Cursor
 ORDER_RA = 0x3C    # Repeat to Address
 ORDER_EUA = 0x12   # Erase Unprotected to Address
 ORDER_PT = 0x05    # Program Tab
+
+KNOWN_ORDERS = {ORDER_SF, ORDER_SFE, ORDER_SBA, ORDER_SA, ORDER_IC, ORDER_RA, ORDER_EUA, ORDER_PT}
 
 
 class TN3270StreamParser:
@@ -32,14 +36,16 @@ class TN3270StreamParser:
                 raw_text_ebcdic=b"",
                 oia_byte=b"\x00",
                 cursor_address=0,
+                wcc=None,
             )
 
         cmd = raw[0]
         pos = 1
-        orders: list[dict] = []
+        orders: list[dict[str, Any]] = []
         text_buf = bytearray()
         cursor_addr = 0
         oia_byte = b"\x00"
+        wcc_byte: Optional[int] = None
 
         # Check for OIA byte header if present in TN3270E data header
         if len(raw) > 5 and raw[0] == 0x00 and raw[1] == 0x00:
@@ -48,6 +54,12 @@ class TN3270StreamParser:
             pos = 5
             cmd = raw[pos] if pos < len(raw) else 0
             pos += 1
+
+        # Check for WCC byte following Write / Erase-Write commands
+        if cmd in (CMD_WRITE, CMD_ERASE_WRITE, CMD_ERASE_WRITE_ALT) and pos < len(raw):
+            if raw[pos] not in KNOWN_ORDERS:
+                wcc_byte = raw[pos]
+                pos += 1
 
         while pos < len(raw):
             b = raw[pos]
@@ -97,5 +109,6 @@ class TN3270StreamParser:
             raw_text_ebcdic=bytes(text_buf),
             oia_byte=oia_byte,
             cursor_address=cursor_addr,
+            wcc=wcc_byte,
             timestamp=frame.timestamp,
         )

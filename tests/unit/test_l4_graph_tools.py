@@ -161,3 +161,31 @@ async def test_step_view_navigation_graph_when_disabled():
     assert result["success"] is False
     assert result["error"] == "NavigatorDisabled"
     await harness.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_harness_properties_when_connected_and_disconnected(mock_harness):
+    """Verify is_connected, active_payload, active_state, and generation_token properties."""
+    assert mock_harness.is_connected is True
+    assert mock_harness.active_payload is not None
+    assert mock_harness.active_state is not None
+    assert mock_harness.generation_token is not None
+    assert mock_harness.generation_token == mock_harness.active_state.generation_token
+
+    # Disconnected harness
+    unconnected_harness = LiveValidationHarness(config_path="configs/mainframe.toml")
+    assert unconnected_harness.is_connected is False
+    assert unconnected_harness.active_payload is None
+    assert unconnected_harness.active_state is None
+    assert unconnected_harness.generation_token is None
+
+
+@pytest.mark.asyncio
+async def test_interactive_loop_disconnected_safely_returns(capsys):
+    """Verify interactive_loop exits cleanly without AttributeError when gateway is None."""
+    from scripts.live_agent_runner import interactive_loop
+
+    unconnected_harness = LiveValidationHarness(config_path="configs/mainframe.toml")
+    await interactive_loop(unconnected_harness)
+    captured = capsys.readouterr()
+    assert "Error: Harness gateway is not connected or initialized" in captured.out
