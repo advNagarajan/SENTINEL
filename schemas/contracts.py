@@ -127,3 +127,104 @@ def validate_l3_to_l2_action(intent: Any, active_state: RuntimeState) -> None:
     if intent.intent_type in (ActionType.TRIGGER_ACTION, ActionType.FILL_AND_SUBMIT):
         if not intent.action_id or not isinstance(intent.action_id, str):
             raise ContractValidationError("Action intent requires a valid non-empty action_id string.")
+
+
+@dataclass
+class L3toL4HandoffPayload:
+    """The explicit, sealed contract payload passed from Layer 3 to Layer 4 (Agent) on every turn."""
+    generation: int
+    generation_token: str
+    screen_title: Optional[str]
+    status_message: Optional[str]
+    screen_text: list[str]
+    editable_fields: dict[str, dict[str, Any]]
+    available_tools: list[dict[str, Any]]
+    is_stable: bool
+    success: bool = True
+    fields: dict[str, dict[str, Any]] = field(default_factory=dict)
+    changed_fields: dict[str, dict[str, str]] = field(default_factory=dict)
+    message: Optional[str] = None
+    error: Optional[str] = None
+    execution_time_ms: float = 0.0
+    generation_before: Optional[int] = None
+    generation_after: Optional[int] = None
+    ticket_id: Optional[str] = None
+    cursor: dict[str, int] = field(default_factory=lambda: {"row": 0, "col": 0})
+    timestamp: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize payload into a clean, agent-consumable JSON dictionary."""
+        return {
+            "success": self.success,
+            "message": self.message or f"Screen state generation #{self.generation} ('{self.screen_title or 'N/A'}').",
+            "generation": self.generation,
+            "generation_after": self.generation_after if self.generation_after is not None else self.generation,
+            "generation_before": self.generation_before,
+            "generation_token": self.generation_token,
+            "screen_title": self.screen_title,
+            "title": self.screen_title,
+            "status_message": self.status_message,
+            "screen_text": self.screen_text,
+            "editable_fields": self.editable_fields,
+            "fields": self.fields if self.fields else self.editable_fields,
+            "changed_fields": self.changed_fields,
+            "cursor": self.cursor,
+            "is_stable": self.is_stable,
+            "available_tools": self.available_tools,
+            "ticket_id": self.ticket_id,
+            "error": self.error,
+            "execution_time_ms": self.execution_time_ms,
+            "timestamp": self.timestamp,
+        }
+
+
+def validate_l3_to_l4_contract(payload: L3toL4HandoffPayload) -> None:
+    """Strict contract validator ensuring L3toL4HandoffPayload satisfies Layer 4 Agent requirements.
+
+    Invariants checked:
+    1. generation must be non-negative integer.
+    2. generation_token must match regex '^gen_\\d+_[0-9a-fA-F]+$'.
+    3. is_stable must be a boolean; if payload is presented for action, is_stable must be True.
+    4. screen_text must be a list of strings containing valid printable characters.
+    5. available_tools must be a non-empty list of valid function schema dicts.
+    6. Every tool requiring generation_token must constrain enum to [payload.generation_token].
+    7. If editable_fields exist, at least one field-filling tool ('set_field_and_submit' or 'fill_form_and_submit') must be present.
+    """
+    if payload.generation < 0:
+        raise ContractValidationError(f"Invalid generation: {payload.generation}. Must be non-negative.")
+
+    if not payload.generation_token or not re.match(r"^gen_\d+_[0-9a-fA-F]+$", payload.generation_token):
+        raise ContractValidationError(f"Invalid generation_token: '{payload.generation_token}'. Must match 'gen_<gen>_<hash>'.")
+
+    if not isinstance(payload.is_stable, bool):
+        raise ContractValidationError("is_stable must be a boolean.")
+
+    if not isinstance(payload.screen_text, list):
+        raise ContractValidationError("screen_text must be a list of strings.")
+
+    for idx, line in enumerate(payload.screen_text):
+        if not isinstance(line, str):
+            raise ContractValidationError(f"screen_text line {idx} must be a string.")
+
+    if not isinstance(payload.available_tools, list) or len(payload.available_tools) == 0:
+        raise ContractValidationError("available_tools must be a non-empty list of tool definitions.")
+
+    for t in payload.available_tools:
+        if not isinstance(t, dict) or t.get("type") != "function" or "function" not in t:
+            raise ContractValidationError(f"Invalid tool schema: {t}. Must be a valid function specification.")
+        fn = t["function"]
+        props = fn.get("parameters", {}).get("properties", {})
+        if "generation_token" in props:
+            enums = props["generation_token"].get("enum", [])
+            if enums != [payload.generation_token]:
+                raise ContractValidationError(
+                    f"Tool '{fn.get('name')}' generation_token enum {enums} does not match payload '{payload.generation_token}'."
+                )
+
+    if payload.editable_fields:
+        tool_names = [t.get("function", {}).get("name") for t in payload.available_tools]
+        if not any(name in tool_names for name in ("set_field_and_submit", "fill_form_and_submit")):
+            raise ContractValidationError(
+                f"Screen has {len(payload.editable_fields)} editable fields, but no field-filling tool was compiled."
+            )
+

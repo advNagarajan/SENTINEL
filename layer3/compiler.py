@@ -53,16 +53,19 @@ class ToolCompiler:
                             },
                             "field_id": {
                                 "type": "string",
-                                "description": "Identifier of the target field to enter text into.",
+                                "description": (
+                                    f"Identifier of the target field to enter text into (e.g. menu option or input field). "
+                                    f"Available editable fields on this screen: {', '.join(editable_fields)}."
+                                ),
                                 "enum": editable_fields,
                             },
                             "value": {
                                 "type": "string",
-                                "description": "Text value to enter into the field.",
+                                "description": "Text value to enter into the field (e.g. option number '1', '3.2', or text).",
                             },
                             "action": {
                                 "type": "string",
-                                "description": "Submission action or key to trigger after typing.",
+                                "description": "Submission action or key to trigger after typing (default: ENTER).",
                                 "enum": actions,
                                 "default": "ENTER" if "ENTER" in actions else actions[0],
                             },
@@ -113,7 +116,10 @@ class ToolCompiler:
             "function": {
                 "name": "trigger_action",
                 "description": (
-                    f"Send an action or navigation key (e.g. ENTER, CLEAR, PF1-PF12, ESCAPE) to the target environment."
+                    "Send an action or navigation key to the target screen. "
+                    "Key conventions: 'PF3' (Exit / Return to previous menu), 'ENTER' (Submit / Select option), "
+                    "'PF7' (Page Up / Scroll backward), 'PF8' (Page Down / Scroll forward), "
+                    "'PF1' (Help), 'CLEAR' (Clear screen)."
                 ),
                 "parameters": {
                     "type": "object",
@@ -125,7 +131,7 @@ class ToolCompiler:
                         },
                         "action_id": {
                             "type": "string",
-                            "description": "The specific action or key to trigger.",
+                            "description": "The specific action or key to trigger (e.g. 'PF3' to go back, 'ENTER' to submit).",
                             "enum": actions,
                         },
                     },

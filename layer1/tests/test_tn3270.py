@@ -5,6 +5,7 @@ from layer1.tn3270 import AID_MAP, TN3270Driver, encode_buffer_address
 from schemas.events import RuntimeEventType
 
 
+# pyrefly: ignore [unannotated-return]
 def test_encode_buffer_address():
     """Verify 3270 12-bit buffer address encoding."""
     # (0, 0) -> 0 -> (0x40, 0x40)
@@ -16,6 +17,7 @@ def test_encode_buffer_address():
     assert addr_1 == bytes([0x40, 0xC1])
 
 
+# pyrefly: ignore [unannotated-return]
 def test_aid_map_completeness():
     """Verify AID_MAP contains all 24 PF keys, PA keys, Enter, Clear, and SysReq."""
     assert AID_MAP["ENTER"] == 0x7D
@@ -39,6 +41,7 @@ def test_aid_map_completeness():
 
 
 @pytest.mark.asyncio
+# pyrefly: ignore [unannotated-return]
 async def test_tn3270_driver_events():
     """Verify event listener registration and event emissions."""
     driver = TN3270Driver(host="127.0.0.1", port=3270)

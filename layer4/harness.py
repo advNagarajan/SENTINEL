@@ -233,6 +233,12 @@ class LiveValidationHarness:
         state = self.active_state
         return state.generation_token if state else None
 
+    def get_agent_observation(self) -> dict[str, Any]:
+        """Return the validated L3toL4 handoff observation for the agent."""
+        if not self.gateway:
+            raise RuntimeError("Harness is not connected.")
+        return self.gateway.get_observation().to_dict()
+
     def get_tools(self) -> list[dict[str, Any]]:
         """Return compiled Layer 3 tool schemas + navigator prediction tool for the agent."""
         if not self.gateway:
