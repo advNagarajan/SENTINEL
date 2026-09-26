@@ -84,3 +84,49 @@ class AuditLogger:
             fields_count=len(state.fields),
             timestamp=state.timestamp,
         )
+
+    def log_action_start(
+        self,
+        runtime_id: Optional[str],
+        tool_name: str,
+        timestamp: float,
+    ) -> None:
+        """Log the start of an agent-requested state-changing action."""
+        self.logger.info(
+            "sentinel_action_started",
+            layer="layer4",
+            runtime_id=runtime_id,
+            tool_name=tool_name,
+            action_started_at=timestamp,
+        )
+
+    def log_action_completion(
+        self,
+        runtime_id: Optional[str],
+        tool_name: str,
+        action_started_at: float,
+        action_completed_at: float,
+        success: bool,
+        ticket_id: Optional[str] = None,
+        generation_before: Optional[int] = None,
+        generation_after: Optional[int] = None,
+        execution_time_ms: Optional[float] = None,
+        error: Optional[str] = None,
+        message: Optional[str] = None,
+    ) -> None:
+        """Log completion or failure metadata for an agent action."""
+        self.logger.info(
+            "sentinel_action_completed",
+            layer="layer4",
+            runtime_id=runtime_id,
+            tool_name=tool_name,
+            action_started_at=action_started_at,
+            action_completed_at=action_completed_at,
+            success=success,
+            ticket_id=ticket_id,
+            generation_before=generation_before,
+            generation_after=generation_after,
+            execution_time_ms=execution_time_ms,
+            error=error,
+            message=message,
+        )

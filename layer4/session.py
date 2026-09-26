@@ -5,7 +5,7 @@ or TSO READY) without spending tokens and roundtrips on splash banners, credenti
 and broadcast fortune quotes on every task.
 """
 import asyncio
-from typing import Any, Optional
+from typing import Any, Optional, Protocol
 import structlog
 
 from layer1.base import EnvironmentDriver
@@ -13,6 +13,49 @@ from layer2.base import StateReducer, StabilityEngine
 from schemas.state import RuntimeState
 
 logger = structlog.get_logger(__name__)
+
+
+class RuntimeSession(Protocol):
+    """Runtime-independent lifecycle contract owned by Layer 4."""
+
+    async def connect(self) -> None:
+        """Connect the underlying runtime."""
+
+    async def initialize(self) -> RuntimeState:
+        """Acquire the initial state exposed to Layer 4."""
+
+    async def teardown(self, active_state: Optional[RuntimeState]) -> None:
+        """Release session-level resources before disconnecting."""
+
+    async def disconnect(self) -> None:
+        """Disconnect the underlying runtime."""
+
+
+class PipelineSession:
+    """Generic session adapter for an already-constructed L1-L2 pipeline."""
+
+    def __init__(self, driver: EnvironmentDriver, reducer: StateReducer, stability: StabilityEngine) -> None:
+        self.driver = driver
+        self.reducer = reducer
+        self.stability = stability
+
+    async def connect(self) -> None:
+        await self.driver.connect()
+
+    async def initialize(self) -> RuntimeState:
+        state, _ = await self.stability.wait_until_stable(
+            driver=self.driver,
+            reducer=self.reducer,
+            runtime_id=self.driver.runtime_id,
+            generation=1,
+        )
+        return state
+
+    async def teardown(self, active_state: Optional[RuntimeState]) -> None:
+        return None
+
+    async def disconnect(self) -> None:
+        await self.driver.disconnect()
 
 
 class SessionBootstrapper:

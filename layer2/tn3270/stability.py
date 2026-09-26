@@ -1,7 +1,7 @@
 """Stage 2d: Modular Multi-Signal Stability Engine for TN3270 protocol determinism."""
 import asyncio
 import time
-from typing import Any
+from typing import Any, Optional
 import structlog
 
 from layer2.base import StabilityEngine

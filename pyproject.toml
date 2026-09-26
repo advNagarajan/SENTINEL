@@ -5,6 +5,7 @@ description = "Deterministic AI Tool Gateway for Closed-Box Legacy Systems"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "mcp>=1.0",
     "pydantic>=2.0",
     "structlog>=24.0",
 ]
