@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "sentinel": {
+      "command": "python",
+      "args": ["scripts/run_sentinel_mcp.py"],
+      "cwd": ".",
+      "includeTools": [
+        "get_screen_state",
+        "get_observation",
+        "set_field_and_submit",
+        "fill_form_and_submit",
+        "trigger_action"
+      ],
+      "timeout": 30000,
+      "trust": false
+    }
+  }
+}

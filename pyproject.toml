@@ -5,7 +5,7 @@ description = "Deterministic AI Tool Gateway for Closed-Box Legacy Systems"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "mcp>=1.0",
+    "mcp>=1.28,<2",
     "pydantic>=2.0",
     "structlog>=24.0",
     "httpx>=0.27,<0.28",
@@ -22,6 +22,20 @@ dev = [
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = [
+    "layer1",
+    "layer1.tn3270",
+    "layer2",
+    "layer2.tn3270",
+    "layer3",
+    "layer4",
+    "drivers",
+    "schemas",
+    "services",
+    "services.navigator",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
