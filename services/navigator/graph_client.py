@@ -42,16 +42,32 @@ class GraphClient:
             await self._driver.close()
             self._driver = None
 
+    @property
+    def driver(self) -> AsyncDriver:
+        """Return the active Neo4j driver or raise if not connected."""
+        if self._driver is None:
+            raise RuntimeError("GraphClient is not connected. Call connect() first.")
+        return self._driver
+
+    def _get_session(self):
+        """Create an async session using the active driver and configured database."""
+        return self.driver.session(database=self.database)
+
     async def _ensure_constraints(self) -> None:
-        """Create uniqueness constraint on Screen.screen_hash if not exists."""
-        query = (
-            "CREATE CONSTRAINT screen_unique IF NOT EXISTS "
-            "FOR (s:Screen) REQUIRE s.screen_hash IS UNIQUE"
-        )
-        async with self._driver.session(database=self.database) as session:
+        """Create uniqueness constraint on Screen.structural_hash if not exists."""
+        async with self._get_session() as session:
             try:
+                # Drop legacy constraint on screen_hash if present
+                await session.run("DROP CONSTRAINT screen_unique IF EXISTS")
+            except Exception:
+                pass
+            try:
+                query = (
+                    "CREATE CONSTRAINT screen_structural_unique IF NOT EXISTS "
+                    "FOR (s:Screen) REQUIRE s.structural_hash IS UNIQUE"
+                )
                 await session.run(query)
-                logger.info("neo4j_constraint_ensured", constraint="screen_unique")
+                logger.info("neo4j_constraint_ensured", constraint="screen_structural_unique")
             except Exception as e:
                 # Constraint may already exist or edition may not support it
                 logger.warning("neo4j_constraint_skipped", error=str(e))
@@ -76,15 +92,16 @@ class GraphClient:
     ) -> dict[str, Any]:
         """Record a state transition using MERGE to deduplicate nodes and edges.
 
-        - If the source/target Screen nodes already exist, updates visit_count and last_seen.
+        - Screen nodes are deduplicated on structural_hash so that visits to the same screen
+          layout (even with volatile data/timestamps/cursor movement) resolve to the same node.
         - If the edge (action_signature) between the same two nodes exists, increments
           traversal_count and appends the value to values_seen (capped).
         - Otherwise, creates new nodes/edges.
         """
         query = """
-        MERGE (src:Screen {screen_hash: $src_hash})
+        MERGE (src:Screen {structural_hash: $src_structural_hash})
         ON CREATE SET
-            src.structural_hash = $src_structural_hash,
+            src.screen_hash = $src_hash,
             src.title = $src_title,
             src.target_name = $target_name,
             src.field_ids = $src_field_ids,
@@ -92,15 +109,15 @@ class GraphClient:
             src.last_seen = datetime(),
             src.visit_count = 1
         ON MATCH SET
+            src.screen_hash = $src_hash,
             src.last_seen = datetime(),
             src.visit_count = src.visit_count + 1,
             src.title = COALESCE($src_title, src.title),
-            src.structural_hash = $src_structural_hash,
             src.field_ids = $src_field_ids
 
-        MERGE (tgt:Screen {screen_hash: $tgt_hash})
+        MERGE (tgt:Screen {structural_hash: $tgt_structural_hash})
         ON CREATE SET
-            tgt.structural_hash = $tgt_structural_hash,
+            tgt.screen_hash = $tgt_hash,
             tgt.title = $tgt_title,
             tgt.target_name = $target_name,
             tgt.field_ids = $tgt_field_ids,
@@ -108,10 +125,10 @@ class GraphClient:
             tgt.last_seen = datetime(),
             tgt.visit_count = 1
         ON MATCH SET
+            tgt.screen_hash = $tgt_hash,
             tgt.last_seen = datetime(),
             tgt.visit_count = tgt.visit_count + 1,
             tgt.title = COALESCE($tgt_title, tgt.title),
-            tgt.structural_hash = $tgt_structural_hash,
             tgt.field_ids = $tgt_field_ids
 
         MERGE (src)-[r:TRANSITION {action_signature: $action_signature}]->(tgt)
@@ -137,6 +154,8 @@ class GraphClient:
         RETURN
             src.screen_hash AS src_hash,
             tgt.screen_hash AS tgt_hash,
+            src.structural_hash AS src_structural_hash,
+            tgt.structural_hash AS tgt_structural_hash,
             r.traversal_count AS traversal_count,
             src.visit_count AS src_visits,
             tgt.visit_count AS tgt_visits
@@ -160,7 +179,7 @@ class GraphClient:
             "max_values": config.MAX_VALUES_PER_EDGE,
         }
 
-        async with self._driver.session(database=self.database) as session:
+        async with self._get_session() as session:
             result = await session.run(query, params)
             record = await result.single()
             logger.info(
@@ -178,7 +197,10 @@ class GraphClient:
         Each transition includes a probability (traversal_count / total_outgoing).
         """
         query = """
-        MATCH (src:Screen {screen_hash: $screen_hash})-[r:TRANSITION]->(tgt:Screen)
+        MATCH (src:Screen)
+        WHERE src.screen_hash = $screen_hash OR src.structural_hash = $screen_hash
+        WITH src
+        MATCH (src)-[r:TRANSITION]->(tgt:Screen)
         WITH src, r, tgt
         ORDER BY r.traversal_count DESC
         WITH src,
@@ -201,7 +223,7 @@ class GraphClient:
             total_outgoing,
             transitions
         """
-        async with self._driver.session(database=self.database) as session:
+        async with self._get_session() as session:
             result = await session.run(query, {"screen_hash": screen_hash})
             record = await result.single()
 
@@ -231,7 +253,10 @@ class GraphClient:
         """Return N-hop subgraph around a screen node."""
         depth = min(depth, 10)  # Safety cap
         query = """
-        MATCH path = (start:Screen {screen_hash: $screen_hash})-[:TRANSITION*1..""" + str(depth) + """]->(neighbor:Screen)
+        MATCH (start:Screen)
+        WHERE start.screen_hash = $screen_hash OR start.structural_hash = $screen_hash
+        WITH start
+        MATCH path = (start)-[:TRANSITION*1..""" + str(depth) + """]->(neighbor:Screen)
         WITH nodes(path) AS ns, relationships(path) AS rs
         UNWIND ns AS n
         WITH DISTINCT n, rs
@@ -251,7 +276,7 @@ class GraphClient:
             }) AS edges
         RETURN nodes, edges
         """
-        async with self._driver.session(database=self.database) as session:
+        async with self._get_session() as session:
             result = await session.run(query, {"screen_hash": screen_hash})
             record = await result.single()
 
@@ -273,16 +298,19 @@ class GraphClient:
     async def find_path(self, from_hash: str, to_hash: str) -> dict[str, Any]:
         """Find shortest path between two screen nodes."""
         query = """
-        MATCH (start:Screen {screen_hash: $from_hash}),
-              (end:Screen {screen_hash: $to_hash}),
-              path = shortestPath((start)-[:TRANSITION*..20]->(end))
+        MATCH (start:Screen)
+        WHERE start.screen_hash = $from_hash OR start.structural_hash = $from_hash
+        MATCH (end:Screen)
+        WHERE end.screen_hash = $to_hash OR end.structural_hash = $to_hash
+        WITH start, end
+        MATCH path = shortestPath((start)-[:TRANSITION*..20]->(end))
         WITH nodes(path) AS ns, relationships(path) AS rs
         RETURN
             [n IN ns | {screen_hash: n.screen_hash, title: n.title}] AS steps,
             [r IN rs | r.action_signature] AS actions,
             length(path) AS path_length
         """
-        async with self._driver.session(database=self.database) as session:
+        async with self._get_session() as session:
             result = await session.run(
                 query, {"from_hash": from_hash, "to_hash": to_hash}
             )
@@ -343,7 +371,7 @@ class GraphClient:
         LIMIT 10
         """
 
-        async with self._driver.session(database=self.database) as session:
+        async with self._get_session() as session:
             stats_result = await session.run(query)
             stats = await stats_result.single()
 
@@ -379,7 +407,7 @@ class GraphClient:
         ORDER BY s.visit_count DESC
         LIMIT $limit
         """
-        async with self._driver.session(database=self.database) as session:
+        async with self._get_session() as session:
             result = await session.run(cypher, {"query": query, "limit": limit})
             screens = [dict(r) async for r in result]
             return {
@@ -409,7 +437,7 @@ class GraphClient:
                 f"Query must start with MATCH, RETURN, WITH, or UNWIND (got '{first_word}')."
             )
 
-        async with self._driver.session(database=self.database) as session:
+        async with self._get_session() as session:
             result = await session.run(query, parameters or {})
             raw_keys = result.keys()
             import inspect
@@ -441,7 +469,7 @@ class GraphClient:
     async def health_check(self) -> bool:
         """Verify Neo4j connectivity."""
         try:
-            async with self._driver.session(database=self.database) as session:
+            async with self._get_session() as session:
                 result = await session.run("RETURN 1 AS ok")
                 record = await result.single()
                 return record["ok"] == 1
