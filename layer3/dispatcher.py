@@ -70,6 +70,27 @@ class ActionDispatcher:
                 action_id=arguments.get("action_id", "ENTER"),
             )
 
+        elif tool_name == "type_text":
+            return CanonicalActionIntent(
+                intent_type=ActionType.FILL_FIELD,
+                generation_token=gen_token,
+                generation=active_state.generation,
+                ticket_id=ticket_id,
+                value=arguments.get("text", ""),
+                action_id="",
+            )
+
+        elif tool_name == "press_keys":
+            keys = arguments.get("keys", "")
+            raw_str = " ".join(keys) if isinstance(keys, list) else str(keys)
+            return CanonicalActionIntent(
+                intent_type=ActionType.SEND_RAW_KEYS,
+                generation_token=gen_token,
+                generation=active_state.generation,
+                ticket_id=ticket_id,
+                raw_keys=raw_str,
+            )
+
         else:
             raise ValueError(f"Unknown downward tool name: '{tool_name}'")
 

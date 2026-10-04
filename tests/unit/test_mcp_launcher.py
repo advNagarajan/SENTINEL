@@ -17,7 +17,7 @@ def test_launcher_resolves_project_root_from_its_own_location() -> None:
 
 
 def test_launcher_finds_current_project_virtual_environment() -> None:
-    expected = Path(sys.executable).resolve()
+    expected = Path(sys.executable)
     if Path(sys.prefix).resolve() == Path(sys.base_prefix).resolve():
         expected = LAUNCHER._python_in(PROJECT_ROOT / ".venv")
     assert LAUNCHER.find_project_python() == expected

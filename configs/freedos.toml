@@ -1,0 +1,29 @@
+[target]
+name       = "freedos"
+runtime_id = "freedos_node_01"
+driver     = "dos"
+reducer    = "dos"
+stability  = "dos"
+
+[dos]
+host = "127.0.0.1"
+port = 5900
+
+[stability]
+poll_interval_ms       = 50
+reaction_timeout_ms    = 750
+quiescence_ms          = 300
+max_wait_ms            = 5000
+enable_cursor_sampling = true
+
+[logging]
+level    = "INFO"
+log_file = "logs/freedos_audit.jsonl"
+
+[session]
+auto_login  = false
+auto_logout = false
+entrypoint  = "raw"
+
+[navigator]
+enabled = false

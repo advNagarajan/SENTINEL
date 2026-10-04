@@ -11,8 +11,8 @@ import pytest
 
 from layer1.base import EnvironmentDriver
 from layer2.dos.action_lowerer import DOSActionLowerer
-from layer2.dos.reducer import DOS_AVAILABLE_ACTIONS, DOSStateReducer
-from layer2.dos.stability import DOSStabilityEngine
+from layer2.dos.reducer import DOS_AVAILABLE_ACTIONS, DOSStateReducer, detect_dos_prompt
+from layer2.dos.stability import DOSStabilityEngine, TIME_PATTERN
 from layer3.dispatcher import ActionDispatcher
 from layer3.gateway import AIToolGateway
 from schemas.actions import ActionType, CanonicalActionIntent
@@ -161,12 +161,22 @@ async def test_dos_reducer_contract_validation() -> None:
     state, delta = reducer.reduce_state(som, "test_node", 0)
     payload = L2toL3HandoffPayload(state=state, delta=delta)
 
-    # Enforce strict contract
+    # On blank screen without prompt, fields must be empty (confirming prompt detection)
     validate_l2_to_l3_contract(payload)
     assert payload.state.screen_size == {"rows": 25, "cols": 80}
     assert len(payload.state.raw_grid) == 25
     assert len(payload.state.screen_hash) == 64
-    assert "cmd_prompt" in payload.state.fields
+    assert payload.state.fields == {}
+
+    # When a real DOS prompt is present on screen
+    som.grid_matrix[24] = list("C:\\>" + (" " * 76))
+    som.cursor = (24, 4)
+    state2, delta2 = reducer.reduce_state(som, "test_node", 1)
+    payload2 = L2toL3HandoffPayload(state=state2, delta=delta2)
+    validate_l2_to_l3_contract(payload2)
+    assert "cmd_prompt" in payload2.state.fields
+    assert payload2.state.fields["cmd_prompt"].row == 24
+    assert payload2.state.fields["cmd_prompt"].col == 4
 
 
 @pytest.mark.asyncio
@@ -207,3 +217,135 @@ async def test_dos_gateway_e2e_mock() -> None:
     assert driver.typed_text == ["cls"]
     assert driver.pressed_keys == ["ENTER"]
     assert res["generation"] == 1
+
+
+def test_detect_dos_prompt_anchoring_and_false_positives() -> None:
+    """Verify detect_dos_prompt strictly anchors at line start and avoids false positives."""
+    grid = [" " * 80 for _ in range(25)]
+
+    # 1. Genuine prompts
+    grid[24] = "C:\\>" + (" " * 76)
+    assert detect_dos_prompt(grid, cur_r=24, cur_c=4) == (24, 4, 76)
+
+    grid[24] = "C:\\FDOS\\BIN>" + (" " * 68)
+    assert detect_dos_prompt(grid, cur_r=24, cur_c=12) == (24, 12, 68)
+
+    grid[24] = "A:>" + (" " * 77)
+    assert detect_dos_prompt(grid, cur_r=24, cur_c=3) == (24, 3, 77)
+
+    # 2. Program output containing prompt mid-line (must NOT match due to ^ anchoring)
+    grid[24] = "Type exit to return to C:\\>" + (" " * 53)
+    assert detect_dos_prompt(grid, cur_r=24, cur_c=27) is None
+
+    # 3. Leading spaces before prompt (must NOT match)
+    grid[24] = "   C:\\>" + (" " * 73)
+    assert detect_dos_prompt(grid, cur_r=24, cur_c=7) is None
+
+    # 4. Cursor positioned before prompt ends
+    grid[24] = "C:\\>" + (" " * 76)
+    assert detect_dos_prompt(grid, cur_r=24, cur_c=2) is None
+
+    # 5. Cursor positioned after user typed command (prompt is not ending at cursor)
+    grid[24] = "C:\\>dir" + (" " * 73)
+    assert detect_dos_prompt(grid, cur_r=24, cur_c=7) is None
+
+    # 6. Cursor row does not match prompt row
+    assert detect_dos_prompt(grid, cur_r=20, cur_c=4) is None
+
+    # 7. Non-drive prompt pattern (e.g. choice prompt without drive letter)
+    grid[24] = "Selection [1-5]>" + (" " * 64)
+    assert detect_dos_prompt(grid, cur_r=24, cur_c=16) is None
+
+
+def test_clock_mask_heuristic_on_off() -> None:
+    """Verify conditional status-bar clock masking on row 24 cols 65-79."""
+    # 1. FreeDOS EDIT status bar with full time HH:MM:SS
+    row_edit = "│<F1=Help> <Alt=Menu>                                            │ 15:43:21 │"
+    clock_zone = row_edit[65:80]
+    assert TIME_PATTERN.search(clock_zone) is not None
+    masked = row_edit[:65] + (" " * 15)
+    assert len(masked) == 80
+    assert masked[65:80] == " " * 15
+
+    # 2. Status bar with HH:MM
+    row_edit_short = "│<F1=Help>                                                        │ 08:30 │   "
+    assert TIME_PATTERN.search(row_edit_short[65:80]) is not None
+
+    # 3. Normal command prompt (no clock) -> must NOT match
+    row_prompt = "C:\\>                                                                            "
+    assert TIME_PATTERN.search(row_prompt[65:80]) is None
+
+    # 4. Numbers that are NOT a time format -> must NOT match
+    row_numbers = "Showing 45 files found in directory listing 1004 bytes total                     "
+    assert TIME_PATTERN.search(row_numbers[65:80]) is None
+
+    # 5. Time pattern located elsewhere (cols 10-18) -> clock_zone (cols 65-80) must NOT match
+    row_mid = "Logged at 12:30:00 by user process                                              "
+    assert TIME_PATTERN.search(row_mid[65:80]) is None
+
+
+@pytest.mark.asyncio
+async def test_cursor_detection_from_reused_frames_and_fallback() -> None:
+    """Verify cursor detection from reused quiescence frames with single-phase fallback."""
+    reducer = DOSStateReducer()
+    stability = DOSStabilityEngine(
+        poll_interval_ms=10,
+        reaction_timeout_ms=50,
+        quiescence_ms=30,
+        min_quiescent_polls=3,
+    )
+
+    # Helper to construct a frame with or without underline cursor at (row=24, col=4)
+    def create_frame(cursor_on: bool) -> np.ndarray:
+        f = np.zeros((400, 720, 3), dtype=np.uint8)
+        # Put prompt C:\> on row 24
+        # At row 24, col 4: underline cursor on scanlines 14..15
+        if cursor_on:
+            y0, y1 = 24 * 16, 25 * 16
+            x0, x1 = 4 * 9, 5 * 9
+            f[y0 + 14 : y1, x0:x1] = (255, 255, 255)
+        return f
+
+    # Case A: Reused frames already contain both blink phases (e.g. 2 ON, 1 OFF)
+    driver_a = MockDOSDriver()
+    # 1 reaction frame + 3 quiescence frames (toggle across frames)
+    driver_a.frames_to_return = [
+        create_frame(True),   # reaction frame
+        create_frame(True),   # poll 1
+        create_frame(False),  # poll 2 (OFF phase)
+        create_frame(True),   # poll 3 (ON phase)
+    ]
+    state_a, rep_a = await stability.wait_until_stable(
+        driver=driver_a,
+        reducer=reducer,
+        runtime_id="node_a",
+        generation=0,
+    )
+    # Both phases were in reused frames: no extra screenshots needed
+    assert rep_a.is_stable is True
+    assert rep_a.details["cursor_sampling_ms"] == 0.0
+    assert state_a.metadata.get("cursor_visible") is True
+    assert state_a.cursor == {"row": 24, "col": 4}
+
+    # Case B: Reused frames contain ONLY one phase (all ON), fallback captures extra frame
+    driver_b = MockDOSDriver()
+    driver_b.frames_to_return = [
+        create_frame(True),  # reaction
+        create_frame(True),  # poll 1
+        create_frame(True),  # poll 2
+        create_frame(True),  # poll 3 (all ON!)
+        create_frame(False), # extra frame 1 (OFF phase provided!)
+        create_frame(True),
+    ]
+    state_b, rep_b = await stability.wait_until_stable(
+        driver=driver_b,
+        reducer=reducer,
+        runtime_id="node_b",
+        generation=0,
+    )
+    assert rep_b.is_stable is True
+    # Extra frames were queried because reused frames had only one phase
+    assert rep_b.details["cursor_sampling_ms"] > 0.0
+    assert state_b.metadata.get("cursor_visible") is True
+    assert state_b.cursor == {"row": 24, "col": 4}
+

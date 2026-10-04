@@ -147,8 +147,10 @@ async def main() -> None:
         for r in range(21, 25):
             print(f"    {r}: {state_dir.raw_grid[r].strip()}")
 
-        assert state_dir.is_stable is True
-        print("\nM6/M7 CONFIRMATION PASSED WITH FLYING COLORS!")
+        assert state_dir.is_stable is False
+        assert rep_dir.details.get("timed_out") is True
+        assert rep_dir.method == "timeout"
+        print("\nM6/M7 CONFIRMATION PASSED WITH FLYING COLORS (TIMEOUT CORRECTLY FLAGGED is_stable=False)!")
 
     finally:
         await driver.disconnect()

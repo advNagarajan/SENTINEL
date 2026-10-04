@@ -1,5 +1,6 @@
 """Stage 2c: State Reducer for producing canonical RuntimeState and ScreenDeltas for FreeDOS."""
 import hashlib
+import re
 import time
 from typing import Any, Optional
 import numpy as np
@@ -22,6 +23,26 @@ DOS_AVAILABLE_ACTIONS: list[str] = [
     "ALT+F", "ALT+X", "ALT+E", "ALT+S", "ALT+O", "ALT+H",
     "CTRL+C",
 ]
+
+
+def detect_dos_prompt(raw_grid: list[str], cur_r: int, cur_c: int) -> Optional[tuple[int, int, int]]:
+    r"""Detect whether an active DOS command prompt is present on the cursor row.
+    
+    Strict requirement:
+    - Anchored at line start: ^[A-Za-z]:\...>, preventing program output from creating a fake prompt.
+    - Must match on the active cursor row (cur_r).
+    - The prompt pattern (e.g. 'C:\>', 'C:\DOS>', 'A:\>') must end precisely at the cursor column (cur_c).
+    
+    Returns (row, col, length) if matched, else None.
+    """
+    if 0 <= cur_r < len(raw_grid) and 0 <= cur_c <= len(raw_grid[cur_r]):
+        line = raw_grid[cur_r]
+        prefix = line[:cur_c]
+        m = re.match(r"^([A-Za-z]:(?:\\[^>]*)?>)$", prefix)
+        if m and m.end(1) == cur_c:
+            return cur_r, cur_c, max(1, 80 - cur_c)
+
+    return None
 
 
 class DOSStateReducer(StateReducer):
@@ -89,19 +110,20 @@ class DOSStateReducer(StateReducer):
 
         status_line = raw_grid[-1].strip() if raw_grid[-1].strip() else None
 
-        # Synthesize editable field at cursor position
-        field_len = max(1, self.cols - cur_c)
-        fields_dict: dict[str, FieldEntry] = {
-            "cmd_prompt": FieldEntry(
+        # Synthesize editable field ONLY if a genuine DOS prompt is detected
+        prompt_info = detect_dos_prompt(raw_grid, cur_r, cur_c)
+        fields_dict: dict[str, FieldEntry] = {}
+        if prompt_info is not None:
+            p_row, p_col, p_len = prompt_info
+            fields_dict["cmd_prompt"] = FieldEntry(
                 label="cmd_prompt",
                 value="",
-                row=cur_r,
-                col=cur_c,
-                length=field_len,
+                row=p_row,
+                col=p_col,
+                length=p_len,
                 protected=False,
                 field_id="cmd_prompt",
             )
-        }
 
         stability_report = StabilityReport(
             is_stable=True,
@@ -201,18 +223,20 @@ class DOSStateReducer(StateReducer):
 
         status_line = raw_grid[-1].strip() if raw_grid[-1].strip() else None
 
-        field_len = max(1, self.cols - cur_c)
-        fields_dict: dict[str, FieldEntry] = {
-            "cmd_prompt": FieldEntry(
+        # Synthesize editable field ONLY if a genuine DOS prompt is detected
+        prompt_info = detect_dos_prompt(raw_grid, cur_r, cur_c)
+        fields_dict: dict[str, FieldEntry] = {}
+        if prompt_info is not None:
+            p_row, p_col, p_len = prompt_info
+            fields_dict["cmd_prompt"] = FieldEntry(
                 label="cmd_prompt",
                 value="",
-                row=cur_r,
-                col=cur_c,
-                length=field_len,
+                row=p_row,
+                col=p_col,
+                length=p_len,
                 protected=False,
                 field_id="cmd_prompt",
             )
-        }
 
         state = RuntimeState(
             runtime_id=runtime_id,

@@ -31,7 +31,7 @@ def find_project_python() -> Path:
         raise FileNotFoundError(f"SENTINEL_PYTHON does not point to a file: {candidate}")
 
     if sys.prefix != sys.base_prefix and _inside(Path(sys.prefix), PROJECT_ROOT):
-        return Path(sys.executable).resolve()
+        return Path(sys.executable).absolute()
 
     environments = [
         candidate
@@ -40,7 +40,7 @@ def find_project_python() -> Path:
         if (candidate := _python_in(child)) is not None
     ]
     if len(environments) == 1:
-        return environments[0].resolve()
+        return environments[0].absolute()
     if len(environments) > 1:
         raise RuntimeError(
             "Multiple project virtual environments were found. Activate the intended one "

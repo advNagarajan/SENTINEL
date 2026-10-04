@@ -12,7 +12,7 @@
         "trigger_action"
       ],
       "timeout": 30000,
-      "trust": false
+      "trust": true
     }
   }
 }

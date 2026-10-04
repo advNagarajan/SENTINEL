@@ -23,7 +23,7 @@ class DriverRegistry:
     @classmethod
     def create_target(
         cls, config_path: str
-    ) -> Tuple[EnvironmentDriver, StateReducer, OIAStabilityEngine, dict[str, Any]]:
+    ) -> Tuple[EnvironmentDriver, StateReducer, Any, dict[str, Any]]:
         """Instantiate L1 Driver, L2 Reducer, and Stability Engine from TOML config."""
         config = cls.load_config(config_path)
         target_cfg = config.get("target", {})
@@ -48,6 +48,28 @@ class DriverRegistry:
                 quiescence_ms=stab_cfg.get("quiescence_ms", 150),
             )
             return driver, reducer, stability, config
+        elif driver_type == "dos":
+            from layer1.dos.driver import DOSDriver
+            from layer2.dos.reducer import DOSStateReducer
+            from layer2.dos.stability import DOSStabilityEngine
+
+            dos_cfg = config.get("dos", {})
+            driver = DOSDriver(
+                host=dos_cfg.get("host", "127.0.0.1"),
+                port=dos_cfg.get("port", 5900),
+                runtime_id=target_cfg.get("runtime_id", "freedos_node_01"),
+            )
+            reducer = DOSStateReducer()
+
+            stab_cfg = config.get("stability", {})
+            stability = DOSStabilityEngine(
+                poll_interval_ms=stab_cfg.get("poll_interval_ms", 50),
+                reaction_timeout_ms=stab_cfg.get("reaction_timeout_ms", 750),
+                quiescence_ms=stab_cfg.get("quiescence_ms", 300),
+                max_wait_ms=stab_cfg.get("max_wait_ms", 5000),
+                enable_cursor_sampling=stab_cfg.get("enable_cursor_sampling", True),
+            )
+            return driver, reducer, stability, config
         else:
             raise NotImplementedError(f"Driver type '{driver_type}' is not registered yet.")
 
@@ -56,13 +78,16 @@ class DriverRegistry:
         """Instantiate target-specific ActionLowerer."""
         if driver_type.lower() == "tn3270":
             return TN3270ActionLowerer()
+        elif driver_type.lower() == "dos":
+            from layer2.dos.action_lowerer import DOSActionLowerer
+            return DOSActionLowerer()
         else:
             raise NotImplementedError(f"Action lowerer for '{driver_type}' is not registered yet.")
 
     @classmethod
     def create_gateway(
         cls, config_path: str
-    ) -> Tuple[EnvironmentDriver, StateReducer, OIAStabilityEngine, ActionLowerer, Any, dict[str, Any]]:
+    ) -> Tuple[EnvironmentDriver, StateReducer, Any, ActionLowerer, Any, dict[str, Any]]:
         """Instantiate complete L1-L2-L3 pipeline and return (driver, gateway, config)."""
         from layer3.dispatcher import ActionDispatcher
         from layer3.gateway import AIToolGateway

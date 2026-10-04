@@ -5,6 +5,7 @@ set -euo pipefail
 # Usage:
 #   ./scripts/launch_freedos.sh         # Normal mode (persistent state, vnc :0)
 #   ./scripts/launch_freedos.sh --test  # Test mode (-snapshot, -display none)
+#   ./scripts/launch_freedos.sh --demo  # Demo mode (-snapshot, QEMU window visible)
 
 FREEDOS_DIR="${FREEDOS_DIR:-/home/sivakuhan/Projects/FreeDos}"
 FREEDOS_IMG="${FREEDOS_IMG:-$FREEDOS_DIR/freedos.qcow2}"
@@ -29,6 +30,7 @@ if ss -tulpn | grep -q ":$QMP_PORT\b"; then
 fi
 
 TEST_MODE=false
+DEMO_MODE=false
 EXTRA_ARGS=()
 
 for arg in "$@"; do
@@ -36,9 +38,12 @@ for arg in "$@"; do
         --test)
             TEST_MODE=true
             ;;
+        --demo)
+            DEMO_MODE=true
+            ;;
         *)
             echo "Unknown argument: $arg" >&2
-            echo "Usage: $0 [--test]" >&2
+            echo "Usage: $0 [--test | --demo]" >&2
             exit 1
             ;;
     esac
@@ -47,6 +52,9 @@ done
 if [ "$TEST_MODE" = true ]; then
     echo "[FreeDOS Launcher] Starting in TEST mode (-snapshot, -display none)..."
     EXTRA_ARGS+=("-snapshot" "-display" "none")
+elif [ "$DEMO_MODE" = true ]; then
+    echo "[FreeDOS Launcher] Starting in DEMO mode (-snapshot, QEMU window visible)..."
+    EXTRA_ARGS+=("-snapshot" "-display" "gtk")
 else
     echo "[FreeDOS Launcher] Starting in NORMAL mode (persistent)..."
 fi
@@ -59,5 +67,5 @@ exec qemu-system-x86_64 \
     -m 512M \
     -drive file="$FREEDOS_IMG",format=qcow2 \
     -qmp tcp:127.0.0.1:"$QMP_PORT",server=on,wait=off \
-    -vnc 127.0.0.1"$VNC_DISPLAY" \
+    -vnc 127.0.0.1"$VNC_DISPLAY",share=ignore \
     "${EXTRA_ARGS[@]}"

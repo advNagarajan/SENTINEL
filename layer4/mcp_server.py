@@ -1,10 +1,14 @@
-"""Minimal MCP adapter for the runtime-agnostic Layer 4 orchestrator."""
+import os
+from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Optional
+import structlog
 
 from mcp.server.fastmcp import FastMCP
 
 from layer4.orchestrator import RuntimeOrchestrator
+
+logger = structlog.get_logger(__name__)
 
 
 @asynccontextmanager
@@ -13,19 +17,34 @@ async def runtime_lifespan(
     orchestrator: RuntimeOrchestrator,
 ) -> AsyncIterator[None]:
     """Connect the configured runtime for the MCP server lifetime."""
-    await orchestrator.connect()
+    try:
+        await orchestrator.connect()
+    except Exception as exc:
+        logger.warning("mcp_runtime_connection_failed", error=str(exc))
     try:
         yield
     finally:
-        await orchestrator.disconnect()
+        try:
+            await orchestrator.disconnect()
+        except Exception:
+            pass
+
+
+def resolve_default_config() -> str:
+    if os.environ.get("SENTINEL_CONFIG"):
+        return os.environ["SENTINEL_CONFIG"]
+    if Path("configs/freedos.toml").is_file():
+        return "configs/freedos.toml"
+    return "configs/mainframe.toml"
 
 
 def create_server(
-    config_path: str = "configs/mainframe.toml",
+    config_path: Optional[str] = None,
     orchestrator: Optional[RuntimeOrchestrator] = None,
 ) -> FastMCP:
     """Create the MCP server and bind it to one Layer 4 runtime session."""
-    runtime = orchestrator or RuntimeOrchestrator(config_path=config_path)
+    active_config = config_path or resolve_default_config()
+    runtime = orchestrator or RuntimeOrchestrator(config_path=active_config)
 
     @asynccontextmanager
     async def lifespan(server: FastMCP) -> AsyncIterator[None]:
