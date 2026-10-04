@@ -1,5 +1,6 @@
 """Tests for portable environment and project-root discovery in the launcher."""
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -23,8 +24,10 @@ def test_launcher_finds_current_project_virtual_environment() -> None:
 
 
 def test_launcher_discovers_venv_without_a_fixed_directory_name(monkeypatch, tmp_path) -> None:
+    scripts_dir = "Scripts" if os.name == "nt" else "bin"
+    executable = "python.exe" if os.name == "nt" else "python"
     environment = tmp_path / "team-python"
-    interpreter = environment / "Scripts" / "python.exe"
+    interpreter = environment / scripts_dir / executable
     interpreter.parent.mkdir(parents=True)
     interpreter.touch()
     (environment / "pyvenv.cfg").touch()
@@ -38,8 +41,10 @@ def test_launcher_discovers_venv_without_a_fixed_directory_name(monkeypatch, tmp
 
 
 def test_launcher_prefers_project_venv_over_external_active_venv(monkeypatch, tmp_path) -> None:
+    scripts_dir = "Scripts" if os.name == "nt" else "bin"
+    executable = "python.exe" if os.name == "nt" else "python"
     project_environment = tmp_path / "project-env"
-    project_interpreter = project_environment / "Scripts" / "python.exe"
+    project_interpreter = project_environment / scripts_dir / executable
     project_interpreter.parent.mkdir(parents=True)
     project_interpreter.touch()
     (project_environment / "pyvenv.cfg").touch()

@@ -17,6 +17,11 @@ ASM_SOURCE = """
 .intel_syntax noprefix
 .text
 _start:
+    # Hide hardware cursor (CH bit 5 = 1)
+    mov ah, 0x01
+    mov cx, 0x2000
+    int 0x10
+
     mov ax, 0xB800
     mov es, ax
     xor di, di
@@ -42,8 +47,14 @@ col_loop:
     dec bh
     jnz row_loop
 
+    # Wait for keypress
     mov ah, 0
     int 0x16
+
+    # Restore normal underline cursor (scanlines 6 to 7)
+    mov ah, 0x01
+    mov cx, 0x0607
+    int 0x10
 
     mov ax, 0x4C00
     int 0x21
@@ -67,6 +78,15 @@ def build_floppy_image(com_path: Path, img_path: Path) -> None:
 
 async def capture_screen(vnc_host: str = "127.0.0.1", vnc_port: int = 5900) -> np.ndarray:
     async with asyncvnc.connect(vnc_host, vnc_port) as client:
+        # Clear prompt with Ctrl+C and Return
+        with client.keyboard.hold("Control_L"):
+            client.keyboard.press("c")
+        await client.drain()
+        await asyncio.sleep(0.3)
+        client.keyboard.press("Return")
+        await client.drain()
+        await asyncio.sleep(0.3)
+
         # Launch A:\CALIB.COM
         client.keyboard.write("a")
         with client.keyboard.hold("Shift_L"):
@@ -78,6 +98,8 @@ async def capture_screen(vnc_host: str = "127.0.0.1", vnc_port: int = 5900) -> n
 
         # Capture calibration frame
         frame = await client.screenshot()
+        os.makedirs("logs", exist_ok=True)
+        Image.fromarray(frame).save("logs/m3_calibration_screen.png")
 
         # Send return to exit CALIB.COM
         client.keyboard.press("Return")

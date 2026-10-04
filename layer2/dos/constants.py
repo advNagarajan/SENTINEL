@@ -70,7 +70,7 @@ CP437_TO_UNICODE: list[str] = [
 DOS_KEYMAP: dict[str, str] = {
     # Navigation & control
     "ENTER": "Return",
-    "ESCAPE": "Escape",
+    "ESC": "Escape",
     "TAB": "Tab",
     "BACKSPACE": "BackSpace",
     "SPACE": "space",
@@ -105,7 +105,7 @@ for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789":
 
 # Input aliases normalized to canonical DOS_KEYMAP keys
 KEY_ALIASES: dict[str, str] = {
-    "ESC": "ESCAPE",
+    "ESCAPE": "ESC",
     "RETURN": "ENTER",
     "PGUP": "PAGE_UP",
     "PGDN": "PAGE_DOWN",
@@ -126,7 +126,7 @@ COMBO_REGEX = re.compile(r"^(?:(ALT|CTRL|CONTROL|SHIFT)\+)+([A-Za-z0-9_]+)$", re
 
 
 def normalize_key_name(key: str) -> str:
-    """Normalize input key name (e.g. 'esc' -> 'ESCAPE', 'PgUp' -> 'PAGE_UP')."""
+    """Normalize input key name (e.g. 'escape' -> 'ESC', 'PgUp' -> 'PAGE_UP')."""
     clean = key.strip().upper()
     return KEY_ALIASES.get(clean, clean)
 
@@ -147,15 +147,26 @@ def parse_key_combo(combo_str: str) -> tuple[list[str], str]:
 
     # Multiple parts: all except the last must be valid modifiers
     mods: list[str] = []
+    mod_set: set[str] = set()
     for mod_part in parts[:-1]:
         if mod_part not in VALID_MODIFIERS:
             raise ValueError(f"Unknown modifier '{mod_part}' in '{combo_str}'. Allowed modifiers: ALT, CTRL, SHIFT.")
         mod_keysym = VALID_MODIFIERS[mod_part]
         if mod_keysym not in mods:
             mods.append(mod_keysym)
+            mod_set.add(mod_part)
 
     base_raw = parts[-1]
     base_canonical = normalize_key_name(base_raw)
+
+    # Security check: explicitly block CTRL+ALT+DELETE to prevent unintended guest reboot
+    if ("CTRL" in mod_set or "CONTROL" in mod_set) and "ALT" in mod_set and base_canonical == "DELETE":
+        raise ValueError("Action 'CTRL+ALT+DELETE' is blocked by security policy to prevent guest reboot.")
+
+    # Unsupported check: explicitly reject CTRL+BREAK with guidance to use CTRL+C
+    if ("CTRL" in mod_set or "CONTROL" in mod_set) and base_raw == "BREAK":
+        raise ValueError("Action 'CTRL+BREAK' is unsupported over VNC. Use 'CTRL+C' to interrupt running DOS processes.")
+
     if base_canonical not in DOS_KEYMAP:
         allowed_bases = sorted(list(DOS_KEYMAP.keys()) + list(KEY_ALIASES.keys()))
         raise ValueError(

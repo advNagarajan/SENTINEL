@@ -116,11 +116,44 @@ def test_m3_acceptance_all_256_characters_recovery(
     assert exact_matches == total_chars
 
 
+def test_m3_exhaustive_identical_and_complement_glyph_pairs(glyph_table: GlyphTable) -> None:
+    """Verify mathematically that no pair of character codes shares an identical or complement
+    bitmap beyond the known blank codes and complement pairs."""
+    templates = glyph_table.templates  # (256, 16, 9)
+
+    identical_pairs: list[tuple[int, int]] = []
+    for i in range(256):
+        for j in range(i + 1, 256):
+            if np.array_equal(templates[i], templates[j]):
+                identical_pairs.append((i, j))
+
+    # The ONLY identical pairs among all 256 characters are the 3 blank glyphs
+    expected_identical = [(0x00, 0x20), (0x00, 0xFF), (0x20, 0xFF)]
+    assert identical_pairs == expected_identical, f"Unexpected identical glyph pairs: {identical_pairs}"
+
+    complement_pairs: list[tuple[int, int]] = []
+    for i in range(256):
+        for j in range(i + 1, 256):
+            if np.array_equal(templates[i], 1 - templates[j]):
+                complement_pairs.append((i, j))
+
+    # The ONLY complement pairs among all 256 characters are the 5 known pairs
+    expected_complements = [
+        (0x00, 0xDB),  # NUL <-> Full Block
+        (0x20, 0xDB),  # Space <-> Full Block
+        (0xDB, 0xFF),  # Full Block <-> NBSP
+        (0xDC, 0xDF),  # Lower half <-> Upper half
+        (0xDD, 0xDE),  # Left half <-> Right half
+    ]
+    assert complement_pairs == expected_complements, f"Unexpected complement pairs: {complement_pairs}"
+
+
 def test_m3_key_normalization() -> None:
     """Verify single source of truth key normalization and aliases."""
     assert normalize_key_name("pgup") == "PAGE_UP"
     assert normalize_key_name("pgdn") == "PAGE_DOWN"
-    assert normalize_key_name("esc") == "ESCAPE"
+    assert normalize_key_name("escape") == "ESC"
+    assert normalize_key_name("esc") == "ESC"
     assert normalize_key_name("return") == "ENTER"
     assert normalize_key_name("ENTER") == "ENTER"
 
@@ -139,10 +172,6 @@ def test_m3_key_combo_grammar() -> None:
     assert mods == ["Shift_L"]
     assert base == "Tab"
 
-    mods, base = parse_key_combo("CTRL+ALT+DELETE")
-    assert mods == ["Control_L", "Alt_L"]
-    assert base == "Delete"
-
     # Single key via parse_key_combo
     mods, base = parse_key_combo("PAGE_UP")
     assert mods == []
@@ -151,6 +180,14 @@ def test_m3_key_combo_grammar() -> None:
     mods, base = parse_key_combo("PGDN")
     assert mods == []
     assert base == "Page_Down"
+
+    # Security check: CTRL+ALT+DELETE blocked
+    with pytest.raises(ValueError, match="Action 'CTRL\\+ALT\\+DELETE' is blocked by security policy"):
+        parse_key_combo("CTRL+ALT+DELETE")
+
+    # Unsupported check: CTRL+BREAK rejected
+    with pytest.raises(ValueError, match="Action 'CTRL\\+BREAK' is unsupported over VNC"):
+        parse_key_combo("CTRL+BREAK")
 
     # Whitelist rejection for invalid bases
     with pytest.raises(ValueError, match="Invalid base key 'FOO'"):
