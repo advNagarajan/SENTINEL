@@ -60,6 +60,7 @@ class RuntimeOrchestrator:
         self._gateway: Optional[AIToolGateway] = None
         self._active_state: Optional[RuntimeState] = None
         self._driver: Any = None
+        self._navigator: Optional[Any] = None
         self._action_lock = asyncio.Lock()
 
     async def connect(self) -> None:
@@ -74,7 +75,7 @@ class RuntimeOrchestrator:
             self._session = (
                 self._session_factory(driver, reducer, stability, config)
                 if self._session_factory
-                else PipelineSession(driver, reducer, stability)
+                else PipelineSession(driver, reducer, stability, config)
             )
 
             await self._session.connect()
@@ -82,6 +83,18 @@ class RuntimeOrchestrator:
             self._active_state = await self._session.initialize()
             initial_payload = L2toL3HandoffPayload(state=self._active_state)
             self._gateway = self._gateway_factory(initial_payload, dispatcher)
+
+            nav_cfg = config.get("navigator", {}) if isinstance(config, dict) else {}
+            if self._navigator is None and nav_cfg.get("enabled", False):
+                try:
+                    from services.navigator.emitter import NavigatorEmitter
+                    self._navigator = NavigatorEmitter(
+                        base_url=nav_cfg.get("url", "http://localhost:8100"),
+                        target_name=config.get("target", {}).get("name", "ibm_mainframe"),
+                    )
+                except Exception as exc:
+                    logger.warning("navigator_init_failed", error=str(exc))
+
             self.state = LifecycleState.READY
         except Exception:
             self.state = LifecycleState.ERROR
@@ -100,6 +113,12 @@ class RuntimeOrchestrator:
             try:
                 await self._session.teardown(self._active_state)
             finally:
+                if self._navigator:
+                    try:
+                        await self._navigator.close()
+                    except Exception:
+                        pass
+                    self._navigator = None
                 try:
                     await self._session.disconnect()
                 finally:
@@ -128,6 +147,8 @@ class RuntimeOrchestrator:
             gateway = self._require_ready_gateway()
             self.state = LifecycleState.EXECUTING
             action_started_at = time.time()
+            if self._navigator and name != "get_screen_state" and self._active_state:
+                self._navigator.capture_pre_state(self._active_state)
             self._safe_audit(
                 "log_action_start",
                 runtime_id=self.runtime_id(),
@@ -137,6 +158,20 @@ class RuntimeOrchestrator:
             try:
                 result = await gateway.execute_tool(name, arguments)
                 self._active_state = gateway.get_active_payload().state
+                if self._navigator and name != "get_screen_state" and self._active_state:
+                    latency = (time.time() - action_started_at) * 1000.0
+                    try:
+                        asyncio.create_task(
+                            self._navigator.emit_transition(
+                                new_state=self._active_state,
+                                tool_name=name,
+                                arguments=arguments,
+                                runtime_id=self.runtime_id() or "unknown",
+                                latency_ms=latency,
+                            )
+                        )
+                    except Exception as nav_exc:
+                        logger.warning("navigator_emission_failed", error=str(nav_exc))
                 self._safe_audit_completion(
                     tool_name=name,
                     action_started_at=action_started_at,

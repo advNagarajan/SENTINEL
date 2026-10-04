@@ -34,15 +34,32 @@ class RuntimeSession(Protocol):
 class PipelineSession:
     """Generic session adapter for an already-constructed L1-L2 pipeline."""
 
-    def __init__(self, driver: EnvironmentDriver, reducer: StateReducer, stability: StabilityEngine) -> None:
+    def __init__(
+        self,
+        driver: EnvironmentDriver,
+        reducer: StateReducer,
+        stability: StabilityEngine,
+        config: Optional[dict[str, Any]] = None,
+    ) -> None:
         self.driver = driver
         self.reducer = reducer
         self.stability = stability
+        self.config = config or {}
+        session_cfg = self.config.get("session", {}) if isinstance(self.config, dict) else {}
+        self.bootstrapper = SessionBootstrapper(session_cfg) if session_cfg else None
 
     async def connect(self) -> None:
         await self.driver.connect()
 
     async def initialize(self) -> RuntimeState:
+        if self.bootstrapper and self.bootstrapper.auto_login and self.bootstrapper.entrypoint != "raw":
+            state, _ = await self.bootstrapper.bootstrap(
+                driver=self.driver,
+                reducer=self.reducer,
+                stability=self.stability,
+            )
+            return state
+
         state, _ = await self.stability.wait_until_stable(
             driver=self.driver,
             reducer=self.reducer,
@@ -52,7 +69,13 @@ class PipelineSession:
         return state
 
     async def teardown(self, active_state: Optional[RuntimeState]) -> None:
-        return None
+        if self.bootstrapper and self.bootstrapper.auto_logout and active_state:
+            await self.bootstrapper.teardown(
+                driver=self.driver,
+                reducer=self.reducer,
+                stability=self.stability,
+                active_state=active_state,
+            )
 
     async def disconnect(self) -> None:
         await self.driver.disconnect()

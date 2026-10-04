@@ -28,3 +28,8 @@ auto_logout = true
 entrypoint  = "ispf"
 user        = "herc01"
 password    = "cul8tr"
+
+[navigator]
+enabled = true
+url     = "http://localhost:8100"
+
