@@ -206,3 +206,19 @@ async def test_emitter_query_methods():
     res = await emitter.query_cypher("MATCH (s:Screen) RETURN s")
     assert res["count"] == 1
 
+
+def test_structural_hash_ignores_scroll_and_decorative_padding():
+    """Verify that pagination offsets and hyphens do not alter structural identity."""
+    fields = {"fld_data": FakeField("fld_data", "Data", 5, 0, 80, True)}
+
+    # Same screen with different row offsets
+    h1 = compute_structural_hash("SYS1.PROCLIB on TK5RES ---------------- Row 1 of 62", fields)
+    h2 = compute_structural_hash("SYS1.PROCLIB on TK5RES ---------------- Row 22 of 62", fields)
+    assert h1 == h2
+
+    # DSLIST with and without row counter
+    h3 = compute_structural_hash("----------------  RFE DSLIST  -----------------", fields)
+    h4 = compute_structural_hash("----------------  RFE DSLIST  ---------------------- Row 1 of 8", fields)
+    assert h3 == h4
+
+

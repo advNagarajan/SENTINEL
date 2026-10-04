@@ -5,6 +5,7 @@ If the navigator is unreachable, errors are logged but never block the pipeline.
 """
 import hashlib
 import json
+import re
 import structlog
 from typing import Any, Optional
 
@@ -18,14 +19,31 @@ except ImportError:
     _HTTPX_AVAILABLE = False
 
 
+def normalize_structural_title(title: Optional[str]) -> str:
+    """Normalize screen title for structural identity hashing.
+
+    Strips decorative padding (hyphens, equal signs) and volatile scroll/pagination
+    counters (e.g. 'Row 1 of 62', 'Columns 001 080', 'Line 10') so pagination and
+    header banners resolve to the identical structural skeleton.
+    """
+    if not title:
+        return ""
+    cleaned = title.strip("- =*#\t\r\n")
+    # Remove scroll and pagination counters (e.g. 'Row 1 of 62', 'Line 10')
+    cleaned = re.sub(r'\b(Row|Line|Col|Cols|Columns)\s+\d+([\s\-]+(of|to)\s+\d+)?\b', '', cleaned, flags=re.IGNORECASE)
+    cleaned = cleaned.strip("- =*#\t\r\n")
+    cleaned = re.sub(r'\s+', ' ', cleaned)
+    return cleaned
+
+
 def compute_structural_hash(title: Optional[str], fields: dict[str, Any]) -> str:
     """Compute a fuzzy identity hash from screen title and field structure.
 
-    This ignores volatile content (field values, timestamps) and hashes only
-    the structural skeleton: title + sorted field IDs + field metadata (row, col, length, protected).
-    Two screens with the same layout but different data will produce the same structural_hash.
+    This ignores volatile content (field values, timestamps, scroll counters) and hashes only
+    the structural skeleton: normalized title + sorted field IDs + field metadata (row, col, length, protected).
+    Two screens with the same layout but different data or pagination offsets will produce the same structural_hash.
     """
-    parts = [title or ""]
+    parts = [normalize_structural_title(title)]
     for key in sorted(fields.keys()):
         f = fields[key]
         # Include structural properties only, not the value

@@ -64,7 +64,12 @@ class TN3270StateReducer(StateReducer):
             )
 
         # 4. Infer screen title (first non-empty protected text line) and status line (bottom line)
-        title: Optional[str] = raw_grid[0].strip() if raw_grid and raw_grid[0].strip() else None
+        raw_title: Optional[str] = raw_grid[0].strip() if raw_grid and raw_grid[0].strip() else None
+        if raw_title:
+            stripped = raw_title.strip("- =*#\t").strip()
+            title: Optional[str] = stripped if stripped else raw_title
+        else:
+            title = None
         status_line: Optional[str] = raw_grid[-1].strip() if raw_grid and raw_grid[-1].strip() else None
 
         # 5. Default initial stability report (overwritten by Stability Engine)
