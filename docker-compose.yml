@@ -44,6 +44,14 @@ services:
       - "4444:4444"
     restart: unless-stopped
 
+  mainframe:
+    image: sivakuhan/tk5:v1.0
+    container_name: tk5-hercules
+    ports:
+      - "3270:3270"
+      - "8038:8038"
+    restart: unless-stopped
+
 volumes:
   neo4j_data:
   neo4j_logs:
