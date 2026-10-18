@@ -69,8 +69,12 @@ class GraphClient:
                 await session.run(query)
                 logger.info("neo4j_constraint_ensured", constraint="screen_structural_unique")
             except Exception as e:
-                # Constraint may already exist or edition may not support it
-                logger.warning("neo4j_constraint_skipped", error=str(e))
+                logger.error("neo4j_constraint_failed", error=str(e))
+                raise RuntimeError(
+                    "Required Neo4j uniqueness constraint on Screen.structural_hash "
+                    "could not be ensured. Resolve existing duplicate values or "
+                    "database permissions before starting Navigator."
+                ) from e
 
     async def record_transition(
         self,

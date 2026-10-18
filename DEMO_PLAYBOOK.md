@@ -68,7 +68,8 @@ gemini
 Verify the automatic session bootstrapper dropped the agent directly into ISPF.
 
 **Prompt to Gemini:**
-> *"Inspect the mainframe screen using `get_observation`. Tell me what screen we are on, what the title is, what fields are editable, and report the active generation token."*
+> *"
+"*
 
 **Expected Output:**
 - Screen Title: `ISPF PRIMARY OPTION MENU`

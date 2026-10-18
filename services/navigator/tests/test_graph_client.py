@@ -154,6 +154,27 @@ async def test_record_transition_executes_merge_query(mock_graph_client):
 
 
 @pytest.mark.asyncio
+async def test_constraint_creation_failure_prevents_startup(mock_graph_client):
+    """Do not allow Navigator to run without the node-deduplication constraint."""
+    client, _ = mock_graph_client
+
+    class ConstraintFailureSession(FakeSession):
+        async def run(self, query: str, params: dict = None):
+            self.queries.append((query, params or {}))
+            if "CREATE CONSTRAINT" in query:
+                raise RuntimeError("duplicate structural_hash values")
+            return FakeResult([])
+
+    session = ConstraintFailureSession()
+    client._driver.session.return_value = session
+
+    with pytest.raises(RuntimeError, match="Required Neo4j uniqueness constraint"):
+        await client._ensure_constraints()
+
+    assert any("CREATE CONSTRAINT" in query for query, _ in session.queries)
+
+
+@pytest.mark.asyncio
 async def test_record_transition_same_action_same_target_increments_count(mock_graph_client):
     """Verify that repeated identical transitions increment traversal_count."""
     client, session = mock_graph_client
