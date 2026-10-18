@@ -1,16 +1,18 @@
 import asyncio
 import os
 import time
-from pathlib import Path
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 from urllib.parse import urlsplit
-import uuid
+
 import structlog
 
 from mcp.server.fastmcp import FastMCP
 
+from layer4.arm_runtime import ARMRuntimeAdapter
 from layer4.orchestrator import RuntimeOrchestrator
 from schemas.observability import (
     EventOutcome,
@@ -210,6 +212,7 @@ async def runtime_lifespan(
     orchestrator: RuntimeOrchestrator,
     producer: Optional[EventProducer] = None,
     session_id: Optional[str] = None,
+    arm_runtime: Optional[ARMRuntimeAdapter] = None,
 ) -> AsyncIterator[None]:
     """Connect the configured runtime for the MCP server lifetime."""
     # An explicitly supplied producer/configuration always wins over the environment.
@@ -245,10 +248,20 @@ async def runtime_lifespan(
                     EventOutcome.SUCCESS,
                     _safe_runtime_id(orchestrator),
                 )
+        if arm_runtime is not None:
+            try:
+                await arm_runtime.connect()
+            except Exception as exc:  # noqa: BLE001 - ARM availability must not block screen tools.
+                logger.warning("mcp_arm_runtime_connection_failed", error=str(exc))
         try:
             yield
         finally:
             with operation_context(session_id=session_context.session_id):
+                if arm_runtime is not None:
+                    try:
+                        await arm_runtime.disconnect()
+                    except Exception as exc:  # noqa: BLE001 - preserve server shutdown and screen cleanup.
+                        logger.warning("mcp_arm_runtime_disconnect_failed", error=str(exc))
                 runtime_id = _safe_runtime_id(orchestrator)
                 _submit_lifecycle_event(
                     active_producer,
@@ -299,6 +312,8 @@ def create_server(
     config_path: Optional[str] = None,
     orchestrator: Optional[RuntimeOrchestrator] = None,
     producer: Optional[EventProducer] = None,
+    arm_config_path: Optional[str] = None,
+    arm_runtime: Optional[ARMRuntimeAdapter] = None,
 ) -> FastMCP:
     """Create the MCP server and bind it to one Layer 4 runtime session."""
     active_config = config_path or resolve_default_config()
@@ -308,6 +323,13 @@ def create_server(
         config_path=active_config,
         observability_producer=active_producer,
     )
+    active_arm_config = arm_config_path or os.environ.get("SENTINEL_ARM_CONFIG")
+    arm_config_error: Optional[str] = None
+    if arm_runtime is None and active_arm_config:
+        try:
+            arm_runtime = ARMRuntimeAdapter.from_config(active_arm_config)
+        except Exception as exc:  # noqa: BLE001 - return ARM configuration errors through ARM tools.
+            arm_config_error = f"ARM runtime configuration failed: {exc}"
     session_id: Optional[str] = None
 
     @asynccontextmanager
@@ -315,7 +337,9 @@ def create_server(
         nonlocal session_id
         session_id = new_context().session_id
         try:
-            async with runtime_lifespan(server, runtime, active_producer, session_id):
+            async with runtime_lifespan(
+                server, runtime, active_producer, session_id, arm_runtime
+            ):
                 yield
         finally:
             session_id = None
@@ -404,6 +428,81 @@ def create_server(
                 "trigger_action",
                 {"generation_token": generation_token, "action_id": action_id},
             )
+        )
+
+    @server.tool()
+    async def get_arm_observation(runtime_id: str) -> dict[str, Any]:
+        """Return fresh L1 ARM observations and their ARM L2 semantic state."""
+        async def operation() -> dict[str, Any]:
+            if arm_config_error:
+                return {
+                    "success": False,
+                    "error": "invalid_runtime_configuration",
+                    "message": arm_config_error,
+                }
+            if arm_runtime is None:
+                return {
+                    "success": False,
+                    "error": "runtime_not_configured",
+                    "message": "Set SENTINEL_ARM_CONFIG to an ARM runtime TOML configuration.",
+                }
+            try:
+                return await arm_runtime.observe(runtime_id)
+            except ValueError as exc:
+                return {"success": False, "error": "invalid_runtime", "message": str(exc)}
+            except Exception as exc:
+                logger.exception("mcp_arm_observation_failed", runtime_id=runtime_id, error=str(exc))
+                return {"success": False, "error": "observation_failed", "message": str(exc)}
+
+        return await _run_instrumented_tool(
+            producer=active_producer,
+            session_id=session_id,
+            tool_name="get_arm_observation",
+            operation=operation,
+        )
+
+    @server.tool()
+    async def execute_arm_action(runtime_id: str, action: str, symbol: str) -> dict[str, Any]:
+        """Execute a supported ARM semantic action; arbitrary debugger commands are unavailable."""
+        async def operation() -> dict[str, Any]:
+            if arm_config_error:
+                return {
+                    "success": False,
+                    "error": "invalid_runtime_configuration",
+                    "message": arm_config_error,
+                    "execution_attempted": False,
+                }
+            if arm_runtime is None:
+                return {
+                    "success": False,
+                    "error": "runtime_not_configured",
+                    "message": "Set SENTINEL_ARM_CONFIG to an ARM runtime TOML configuration.",
+                    "execution_attempted": False,
+                }
+            try:
+                return await arm_runtime.execute_action(runtime_id, action, symbol)
+            except ValueError as exc:
+                return {
+                    "success": False,
+                    "error": "invalid_runtime_or_input",
+                    "message": str(exc),
+                    "execution_attempted": False,
+                }
+            except Exception as exc:
+                logger.exception("mcp_arm_action_failed", runtime_id=runtime_id, action=action)
+                return {
+                    "success": False,
+                    "status": "unknown",
+                    "error": "action_failed",
+                    "message": str(exc),
+                    "execution_attempted": None,
+                }
+
+        return await _run_instrumented_tool(
+            producer=active_producer,
+            session_id=session_id,
+            tool_name="execute_arm_action",
+            operation=operation,
         )
 
     return server

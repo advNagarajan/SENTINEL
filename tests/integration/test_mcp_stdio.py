@@ -15,6 +15,8 @@ EXPECTED_TOOLS = {
     "set_field_and_submit",
     "fill_form_and_submit",
     "trigger_action",
+    "get_arm_observation",
+    "execute_arm_action",
 }
 
 
@@ -54,6 +56,31 @@ async def test_stdio_discovery_observation_generation_and_action() -> None:
         await session.initialize()
         discovered = await session.list_tools()
         assert {tool.name for tool in discovered.tools} == EXPECTED_TOOLS
+        schemas = {tool.name: tool.inputSchema for tool in discovered.tools}
+        assert set(schemas["get_arm_observation"]["properties"]) == {"runtime_id"}
+        assert set(schemas["execute_arm_action"]["properties"]) == {"runtime_id", "action", "symbol"}
+
+        arm_observation = await session.call_tool(
+            "get_arm_observation", {"runtime_id": "arm-protocol-test"}
+        )
+        assert arm_observation.structuredContent["state"] == {
+            "environment": "arm", "decoded_counter": 17
+        }
+        arm_action = await session.call_tool(
+            "execute_arm_action",
+            {
+                "runtime_id": "arm-protocol-test",
+                "action": "increment_counter",
+                "symbol": "counter",
+            },
+        )
+        assert arm_action.structuredContent["success"] is True
+        assert arm_action.structuredContent["evidence"]["single_step_verified"] is True
+        bad_arm_runtime = await session.call_tool(
+            "get_arm_observation", {"runtime_id": "freedos_node_01"}
+        )
+        assert bad_arm_runtime.structuredContent["success"] is False
+        assert bad_arm_runtime.structuredContent["error"] == "invalid_runtime"
 
         observed = await session.call_tool("get_observation", {})
         observation = observed.structuredContent

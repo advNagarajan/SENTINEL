@@ -289,3 +289,45 @@ def test_runtime_identifier_with_sensitive_marker_is_omitted(orchestrator):
     orchestrator.runtime_id.return_value = "runtime-password"
 
     assert _safe_runtime_id(orchestrator) is None
+
+
+@pytest.mark.asyncio
+async def test_arm_mcp_tools_are_registered_and_route_only_to_arm_adapter():
+    arm_runtime = MagicMock()
+    arm_runtime.observe = AsyncMock(return_value={"success": True, "state": {"environment": "arm"}})
+    arm_runtime.execute_action = AsyncMock(
+        return_value={"success": True, "status": "succeeded", "evidence": {"verified": True}}
+    )
+    server = create_server(arm_runtime=arm_runtime)
+
+    tools = {tool.name: tool for tool in server._tool_manager.list_tools()}
+    assert {"get_arm_observation", "execute_arm_action"} <= set(tools)
+    assert set(tools["get_arm_observation"].parameters["properties"]) == {"runtime_id"}
+    assert set(tools["execute_arm_action"].parameters["properties"]) == {
+        "runtime_id", "action", "symbol"
+    }
+
+    _content, observation = await server.call_tool(
+        "get_arm_observation", {"runtime_id": "arm-01"}
+    )
+    assert observation == {"success": True, "state": {"environment": "arm"}}
+    arm_runtime.observe.assert_awaited_once_with("arm-01")
+
+    _content, action = await server.call_tool(
+        "execute_arm_action",
+        {"runtime_id": "arm-01", "action": "increment_counter", "symbol": "counter"},
+    )
+    assert action["success"] is True
+    assert action["evidence"]["verified"] is True
+    arm_runtime.execute_action.assert_awaited_once_with("arm-01", "increment_counter", "counter")
+
+
+@pytest.mark.asyncio
+async def test_arm_mcp_returns_configuration_error_without_changing_default_runtime():
+    server = create_server()
+    _content, result = await server.call_tool("execute_arm_action", {
+        "runtime_id": "arm-01", "action": "increment_counter", "symbol": "counter"
+    })
+    assert result["success"] is False
+    assert result["error"] == "runtime_not_configured"
+    assert result["execution_attempted"] is False

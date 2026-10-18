@@ -32,7 +32,11 @@ build-backend = "setuptools.build_meta"
 packages = [
     "layer1",
     "layer1.tn3270",
+    "layer1.arm",
+    "layer1.dos",
     "layer2",
+    "layer2.arm",
+    "layer2.dos",
     "layer2.tn3270",
     "layer3",
     "layer4",

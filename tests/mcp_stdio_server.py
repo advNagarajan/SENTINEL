@@ -75,6 +75,40 @@ class NullAudit:
         pass
 
 
+class ControlledARMRuntime:
+    """Protocol-test adapter proving ARM tools route independently of screen L3."""
+
+    runtime_id = "arm-protocol-test"
+
+    async def connect(self) -> None:
+        pass
+
+    async def disconnect(self) -> None:
+        pass
+
+    async def observe(self, runtime_id: str) -> dict:
+        if runtime_id != self.runtime_id:
+            raise ValueError(f"unknown ARM runtime: {runtime_id!r}")
+        return {
+            "success": True,
+            "runtime_id": self.runtime_id,
+            "observation": {"frame_seq": 4},
+            "state": {"environment": "arm", "decoded_counter": 17},
+        }
+
+    async def execute_action(self, runtime_id: str, action: str, symbol: str) -> dict:
+        if runtime_id != self.runtime_id:
+            raise ValueError(f"unknown ARM runtime: {runtime_id!r}")
+        if action != "increment_counter" or symbol != "counter":
+            return {"success": False, "status": "rejected", "execution_attempted": False}
+        return {
+            "success": True,
+            "status": "succeeded",
+            "execution_attempted": True,
+            "evidence": {"breakpoint_verified": True, "single_step_verified": True},
+        }
+
+
 def make_runtime() -> RuntimeOrchestrator:
     driver = SimpleNamespace(runtime_id="mcp-protocol-test")
     reducer = object()
@@ -91,7 +125,7 @@ def make_runtime() -> RuntimeOrchestrator:
 
 
 def main() -> None:
-    create_server(orchestrator=make_runtime()).run(transport="stdio")
+    create_server(orchestrator=make_runtime(), arm_runtime=ControlledARMRuntime()).run(transport="stdio")
 
 
 if __name__ == "__main__":
