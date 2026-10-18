@@ -2,6 +2,7 @@
 and coordinates downward execution with Layer 2 ActionLowerer and post-action stability settling.
 """
 import time
+import asyncio
 from typing import Any, Optional
 import uuid
 import structlog
@@ -11,6 +12,8 @@ from layer2.base import ActionLowerer, StateReducer
 from schemas.actions import ActionResult, ActionType, CanonicalActionIntent
 from schemas.contracts import ContractValidationError, L2toL3HandoffPayload, validate_l3_to_l2_action
 from schemas.state import RuntimeState, ScreenDelta
+from schemas.observability import EventOutcome, EventType, SourceLayer, STABILITY_METHODS
+from services.observability_events import submit_layer_event
 
 logger = structlog.get_logger(__name__)
 
@@ -24,11 +27,16 @@ class ActionDispatcher:
         reducer: StateReducer,
         action_lowerer: ActionLowerer,
         stability_engine: Any,
+        observability_producer: Any = None,
     ) -> None:
         self.driver = driver
         self.reducer = reducer
         self.action_lowerer = action_lowerer
         self.stability = stability_engine
+        self._observability_producer = observability_producer
+
+    def set_observability_producer(self, producer: Any) -> None:
+        self._observability_producer = producer
 
     def create_intent(
         self,
@@ -107,7 +115,14 @@ class ActionDispatcher:
         intent = self.create_intent(tool_name, arguments, active_state)
 
         # 2. Strict contract validation before touching any driver or lowerer
-        validate_l3_to_l2_action(intent, active_state)
+        try:
+            validate_l3_to_l2_action(intent, active_state)
+        except ContractValidationError as exc:
+            # Preserve the existing exception type/message while allowing the
+            # gateway to retain the already-created L3 correlation fields.
+            exc._sentinel_ticket_id = intent.ticket_id
+            exc._sentinel_generation_before = active_state.generation
+            raise
 
         logger.info(
             "l3_dispatching_action",
@@ -129,12 +144,64 @@ class ActionDispatcher:
 
         # 4. Post-action settling via L2 Stability Engine
         next_generation = active_state.generation + 1
-        new_state, report = await self.stability.wait_until_stable(
-            driver=self.driver,
-            reducer=self.reducer,
-            runtime_id=self.driver.runtime_id,
-            generation=next_generation,
-            previous_state=active_state,
+        stability_started_at = time.perf_counter()
+        self._submit_stability_event(
+            event_type=EventType.STABILITY_STARTED,
+            outcome=EventOutcome.STARTED,
+            ticket_id=intent.ticket_id,
+            generation_before=active_state.generation,
+            generation_after=next_generation,
+        )
+        try:
+            new_state, report = await self.stability.wait_until_stable(
+                driver=self.driver,
+                reducer=self.reducer,
+                runtime_id=self.driver.runtime_id,
+                generation=next_generation,
+                previous_state=active_state,
+            )
+        except asyncio.CancelledError as exc:
+            exc._sentinel_ticket_id = intent.ticket_id
+            exc._sentinel_generation_before = active_state.generation
+            self._submit_stability_event(
+                event_type=EventType.STABILITY_COMPLETED,
+                outcome=EventOutcome.CANCELLED,
+                ticket_id=intent.ticket_id,
+                generation_before=active_state.generation,
+                generation_after=next_generation,
+                duration_ms=(time.perf_counter() - stability_started_at) * 1000.0,
+            )
+            raise
+        except Exception as exc:
+            exc._sentinel_ticket_id = intent.ticket_id
+            exc._sentinel_generation_before = active_state.generation
+            self._submit_stability_event(
+                event_type=EventType.STABILITY_COMPLETED,
+                outcome=EventOutcome.FAILURE,
+                ticket_id=intent.ticket_id,
+                generation_before=active_state.generation,
+                generation_after=next_generation,
+                duration_ms=(time.perf_counter() - stability_started_at) * 1000.0,
+                metadata={"error_category": "unknown"},
+            )
+            raise
+
+        stability_method = getattr(report, "method", "unknown")
+        if stability_method not in STABILITY_METHODS:
+            stability_method = "unknown"
+        is_stable = bool(getattr(report, "is_stable", False))
+        self._submit_stability_event(
+            event_type=EventType.STABILITY_COMPLETED,
+            outcome=EventOutcome.SUCCESS if is_stable else EventOutcome.TIMEOUT,
+            ticket_id=intent.ticket_id,
+            generation_before=active_state.generation,
+            generation_after=getattr(new_state, "generation", next_generation),
+            duration_ms=(time.perf_counter() - stability_started_at) * 1000.0,
+            metadata={
+                "stability_method": stability_method,
+                "is_stable": is_stable,
+                "iterations": getattr(report, "iterations", 0),
+            },
         )
 
         # 5. Build sealed L2 -> L3 handoff payload with ScreenDelta
@@ -174,3 +241,27 @@ class ActionDispatcher:
         action_result.screen_hash_after = new_state.screen_hash
 
         return action_result, new_payload
+
+    def _submit_stability_event(
+        self,
+        *,
+        event_type: EventType,
+        outcome: EventOutcome,
+        ticket_id: str,
+        generation_before: int,
+        generation_after: int,
+        duration_ms: Optional[float] = None,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> None:
+        submit_layer_event(
+            self._observability_producer,
+            event_type=event_type,
+            outcome=outcome,
+            source_layer=SourceLayer.LAYER2,
+            source_component=self.stability.__class__.__name__,
+            ticket_id=ticket_id,
+            generation_before=generation_before,
+            generation_after=generation_after,
+            duration_ms=duration_ms,
+            metadata=metadata,
+        )

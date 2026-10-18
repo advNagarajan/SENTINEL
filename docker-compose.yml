@@ -36,6 +36,25 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  logging-service:
+    build:
+      context: .
+      dockerfile: services/logging_service/Dockerfile
+    ports:
+      - "127.0.0.1:8200:8200"
+    environment:
+      SENTINEL_LOG_DATABASE: /var/lib/sentinel-logging/observability.sqlite3
+    volumes:
+      - sentinel_logging_data:/var/lib/sentinel-logging
+    healthcheck:
+      test:
+        ["CMD", "python", "-c", "import urllib.request; response = urllib.request.urlopen('http://127.0.0.1:8200/health', timeout=2); raise SystemExit(0 if response.status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      start_period: 5s
+      retries: 5
+    restart: unless-stopped
+
   freedos:
     image: sivakuhan/freedos:latest
     container_name: sentinel-freedos
@@ -55,3 +74,4 @@ services:
 volumes:
   neo4j_data:
   neo4j_logs:
+  sentinel_logging_data:

@@ -1,10 +1,11 @@
 """Unit tests for Layer 3 downward contract enforcement, error handling, and tool validation."""
+from types import SimpleNamespace
 import pytest
 from unittest.mock import AsyncMock
 
 from layer3.dispatcher import ActionDispatcher
 from layer3.gateway import AIToolGateway
-from schemas.actions import ActionType, CanonicalActionIntent
+from schemas.actions import ActionResult, ActionType, CanonicalActionIntent
 from schemas.contracts import ContractValidationError, L2toL3HandoffPayload, validate_l3_to_l2_action
 from schemas.state import FieldEntry, RuntimeState, ScreenType, StabilityReport
 
@@ -83,6 +84,69 @@ async def test_gateway_handles_validation_error_gracefully(active_payload):
     assert res["success"] is False
     assert res["error"] == "ContractValidationError"
     assert "Simulated contract failure" in res["message"]
+
+
+@pytest.mark.asyncio
+async def test_real_dispatcher_validation_failure_preserves_ticket_correlation(active_payload):
+    driver = AsyncMock()
+    lowerer = AsyncMock()
+    stability = AsyncMock()
+    dispatcher = ActionDispatcher(
+        driver=driver,
+        reducer=object(),
+        action_lowerer=lowerer,
+        stability_engine=stability,
+    )
+    gateway = AIToolGateway(initial_payload=active_payload, dispatcher=dispatcher)
+
+    result = await gateway.execute_tool(
+        "set_field_and_submit",
+        {
+            "generation_token": active_payload.state.generation_token,
+            "field_id": "fld_banner",
+            "value": "ATTEMPT",
+            "action": "ENTER",
+        },
+    )
+
+    assert result["success"] is False
+    assert result["ticket_id"].startswith("ticket_")
+    assert result["generation_before"] == active_payload.state.generation
+    lowerer.lower_and_execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stability_exception_preserves_ticket_correlation(active_payload):
+    driver = SimpleNamespace(runtime_id="test_node")
+    lowerer = AsyncMock()
+    lowerer.lower_and_execute.return_value = ActionResult(
+        ticket_id="ticket-stability-error",
+        success=True,
+        generation_before=1,
+        generation_after=2,
+        screen_hash_before=active_payload.state.screen_hash,
+        screen_hash_after="",
+        execution_time_ms=1.0,
+    )
+    stability = AsyncMock()
+    stability.wait_until_stable.side_effect = RuntimeError("synthetic stability failure")
+    dispatcher = ActionDispatcher(
+        driver=driver,
+        reducer=object(),
+        action_lowerer=lowerer,
+        stability_engine=stability,
+    )
+    gateway = AIToolGateway(initial_payload=active_payload, dispatcher=dispatcher)
+
+    result = await gateway.execute_tool(
+        "trigger_action",
+        {"generation_token": active_payload.state.generation_token, "action_id": "ENTER"},
+    )
+
+    assert result["success"] is False
+    assert result["ticket_id"].startswith("ticket_")
+    assert result["generation_before"] == 1
+    assert "generation_after" not in result
 
 
 def test_dispatcher_rejects_unknown_tool(active_payload):

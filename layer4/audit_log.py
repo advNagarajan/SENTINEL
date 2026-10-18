@@ -2,10 +2,53 @@
 import json
 import logging
 import os
+import re
 import sys
 import time
+from collections.abc import Mapping
 from typing import Any, Optional
 import structlog
+
+
+_REDACTED = "[REDACTED]"
+_SENSITIVE_LOG_KEY_PATTERN = re.compile(
+    r"(?:password|passwd|secret|credential|token|typed[_-]?value|screen[_-]?(?:text|content|grid)|"
+    r"raw[_-]?(?:screen|grid|bytes)|input(?:[_-]?value)?|field[_-]?value|authorization|api[_-]?key)",
+    re.IGNORECASE,
+)
+_SENSITIVE_LOG_TEXT_PATTERN = re.compile(
+    r"\b(?:password|passwd|secret|credential|token|typed[_ -]?(?:value|input)|"
+    r"screen[_ -]?(?:text|content|grid)|raw[_ -]?(?:screen|grid|bytes)|"
+    r"authorization|api[_ -]?key)\b",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_log_value(value: Any, key: Optional[str] = None) -> Any:
+    """Recursively redact known sensitive log fields without changing structure."""
+    if key and _SENSITIVE_LOG_KEY_PATTERN.search(key):
+        return _REDACTED
+    if isinstance(value, Mapping):
+        return {
+            str(item_key): _sanitize_log_value(item_value, str(item_key))
+            for item_key, item_value in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_log_value(item) for item in value]
+    if isinstance(value, bytes):
+        return _REDACTED
+    if isinstance(value, str) and _SENSITIVE_LOG_TEXT_PATTERN.search(value):
+        return _REDACTED
+    return value
+
+
+def redact_sensitive_log_fields(
+    _logger: Any,
+    _method_name: str,
+    event_dict: dict[str, Any],
+) -> dict[str, Any]:
+    """Structlog processor applied to audit and runtime warning/error records."""
+    return _sanitize_log_value(event_dict)
 
 
 class FileAndConsoleHandler(logging.Handler):
@@ -43,6 +86,7 @@ def setup_logging(log_file: str = "logs/mainframe_audit.jsonl", log_level: str =
             structlog.contextvars.merge_contextvars,
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="iso"),
+            redact_sensitive_log_fields,
             structlog.processors.JSONRenderer(),
         ],
         logger_factory=structlog.stdlib.LoggerFactory(),

@@ -1,0 +1,1 @@
+"""Isolated SENTINEL observability event ingestion service."""

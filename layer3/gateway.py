@@ -14,6 +14,18 @@ from schemas.contracts import (
 logger = structlog.get_logger(__name__)
 
 
+def _failure_correlation(exc: BaseException) -> dict[str, Any]:
+    """Return only validated correlation fields attached by the dispatcher."""
+    fields: dict[str, Any] = {}
+    ticket_id = getattr(exc, "_sentinel_ticket_id", None)
+    generation_before = getattr(exc, "_sentinel_generation_before", None)
+    if isinstance(ticket_id, str):
+        fields["ticket_id"] = ticket_id
+    if isinstance(generation_before, int) and not isinstance(generation_before, bool) and generation_before >= 0:
+        fields["generation_before"] = generation_before
+    return fields
+
+
 class AIToolGateway:
     """High-level Gateway presented to LLMs or Layer 4 Agent orchestrator."""
 
@@ -151,19 +163,23 @@ class AIToolGateway:
 
         except ContractValidationError as cve:
             logger.warning("l3_contract_validation_failed", error=str(cve))
-            return {
+            failure = {
                 "success": False,
                 "error": "ContractValidationError",
                 "message": str(cve),
                 "generation_token": self.active_payload.state.generation_token,
                 "available_tools": self.get_tools(),
             }
+            failure.update(_failure_correlation(cve))
+            return failure
         except Exception as exc:
             logger.error("l3_tool_execution_failed", error=str(exc))
-            return {
+            failure = {
                 "success": False,
                 "error": exc.__class__.__name__,
                 "message": str(exc),
                 "generation_token": self.active_payload.state.generation_token,
                 "available_tools": self.get_tools(),
             }
+            failure.update(_failure_correlation(exc))
+            return failure

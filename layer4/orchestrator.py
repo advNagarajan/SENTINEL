@@ -1,5 +1,8 @@
 """Runtime-agnostic Layer 4 lifecycle and agent orchestration."""
 import asyncio
+from datetime import datetime, timezone
+import math
+import re
 import time
 from enum import Enum
 from typing import Any, Callable, Optional
@@ -10,7 +13,19 @@ from layer3.gateway import AIToolGateway
 from layer4.audit_log import AuditLogger
 from layer4.session import PipelineSession, RuntimeSession
 from schemas.contracts import L2toL3HandoffPayload
+from schemas.observability import (
+    EventOutcome,
+    EventType,
+    EventValidationError,
+    is_safe_identifier,
+    MAX_DURATION_MS,
+    ObservabilityEvent,
+    Severity,
+    SourceLayer,
+)
 from schemas.state import RuntimeState
+from services.observability_context import current_context
+from services.observability_producer import EventProducer
 
 logger = structlog.get_logger(__name__)
 
@@ -36,6 +51,7 @@ class InvalidRuntimeState(RuntimeError):
 PipelineFactory = Callable[[str], tuple[Any, Any, Any, Any, Any, dict[str, Any]]]
 SessionFactory = Callable[[Any, Any, Any, dict[str, Any]], RuntimeSession]
 GatewayFactory = Callable[[L2toL3HandoffPayload, Any], AIToolGateway]
+_SCREEN_HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
 class RuntimeOrchestrator:
@@ -48,12 +64,14 @@ class RuntimeOrchestrator:
         session_factory: Optional[SessionFactory] = None,
         gateway_factory: GatewayFactory = AIToolGateway,
         audit_logger: Optional[AuditLogger] = None,
+        observability_producer: Optional[EventProducer] = None,
     ) -> None:
         self.config_path = config_path
         self._pipeline_factory = pipeline_factory
         self._session_factory = session_factory
         self._gateway_factory = gateway_factory
         self._audit_logger = audit_logger or AuditLogger()
+        self._observability_producer = observability_producer
         self.state = LifecycleState.DISCONNECTED
 
         self._session: Optional[RuntimeSession] = None
@@ -72,6 +90,10 @@ class RuntimeOrchestrator:
         try:
             driver, reducer, stability, _lowerer, dispatcher, config = self._pipeline_factory(self.config_path)
             self._driver = driver
+            for component in (_lowerer, dispatcher):
+                bind_producer = getattr(component, "set_observability_producer", None)
+                if callable(bind_producer):
+                    bind_producer(self._observability_producer)
             self._session = (
                 self._session_factory(driver, reducer, stability, config)
                 if self._session_factory
@@ -135,16 +157,78 @@ class RuntimeOrchestrator:
         return gateway.get_tools()
 
     def get_observation(self) -> dict[str, Any]:
-        gateway = self._require_ready_gateway()
-        return gateway.get_observation().to_dict()
+        started_at = time.perf_counter()
+        try:
+            gateway = self._require_ready_gateway()
+        except Exception as exc:
+            self._submit_observation_event(
+                EventType.OBSERVATION_COMPLETED,
+                EventOutcome.FAILURE,
+                duration_ms=self._elapsed_ms(started_at),
+                error_category=self._classify_exception(exc),
+            )
+            raise
+        self._submit_observation_event(EventType.OBSERVATION_STARTED, EventOutcome.STARTED)
+        try:
+            result = gateway.get_observation().to_dict()
+        except Exception as exc:
+            self._submit_observation_event(
+                EventType.OBSERVATION_COMPLETED,
+                EventOutcome.FAILURE,
+                duration_ms=self._elapsed_ms(started_at),
+                error_category=self._classify_exception(exc),
+            )
+            raise
+        self._submit_observation_event(
+            EventType.OBSERVATION_COMPLETED,
+            EventOutcome.SUCCESS,
+            duration_ms=self._elapsed_ms(started_at),
+        )
+        return result
 
     async def execute_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if name == "get_screen_state":
-            gateway = self._require_ready_gateway()
-            return await gateway.execute_tool(name, arguments)
+            started_at = time.perf_counter()
+            try:
+                gateway = self._require_ready_gateway()
+            except Exception as exc:
+                self._submit_observation_event(
+                    EventType.OBSERVATION_COMPLETED,
+                    EventOutcome.FAILURE,
+                    duration_ms=self._elapsed_ms(started_at),
+                    error_category=self._classify_exception(exc),
+                )
+                raise
+            self._submit_observation_event(EventType.OBSERVATION_STARTED, EventOutcome.STARTED)
+            try:
+                result = await gateway.execute_tool(name, arguments)
+            except Exception as exc:
+                self._submit_observation_event(
+                    EventType.OBSERVATION_COMPLETED,
+                    EventOutcome.FAILURE,
+                    duration_ms=self._elapsed_ms(started_at),
+                    error_category=self._classify_exception(exc),
+                )
+                raise
+            self._submit_observation_event(
+                EventType.OBSERVATION_COMPLETED,
+                EventOutcome.SUCCESS,
+                duration_ms=self._elapsed_ms(started_at),
+            )
+            return result
 
         async with self._action_lock:
-            gateway = self._require_ready_gateway()
+            try:
+                gateway = self._require_ready_gateway()
+            except Exception as exc:
+                self._submit_action_event(
+                    event_type=EventType.ACTION_FAILED,
+                    outcome=EventOutcome.FAILURE,
+                    tool_name=name,
+                    runtime_id=self.runtime_id(),
+                    error_category=self._classify_exception(exc),
+                )
+                raise
             self.state = LifecycleState.EXECUTING
             action_started_at = time.time()
             if self._navigator and name != "get_screen_state" and self._active_state:
@@ -154,6 +238,14 @@ class RuntimeOrchestrator:
                 runtime_id=self.runtime_id(),
                 tool_name=name,
                 timestamp=action_started_at,
+            )
+            starting_generation = self._active_generation(gateway)
+            self._submit_action_event(
+                event_type=EventType.ACTION_STARTED,
+                outcome=EventOutcome.STARTED,
+                tool_name=name,
+                runtime_id=self.runtime_id(),
+                generation_before=starting_generation,
             )
             try:
                 result = await gateway.execute_tool(name, arguments)
@@ -177,12 +269,44 @@ class RuntimeOrchestrator:
                     action_started_at=action_started_at,
                     result=result,
                 )
+                terminal_type, terminal_outcome, error_category = self._classify_action_result(result)
+                self._submit_action_event(
+                    event_type=terminal_type,
+                    outcome=terminal_outcome,
+                    tool_name=name,
+                    runtime_id=self.runtime_id(),
+                    result=result,
+                    error_category=error_category,
+                    generation_before=starting_generation,
+                )
                 return result
+            except asyncio.CancelledError as exc:
+                self._safe_audit_completion(
+                    tool_name=name,
+                    action_started_at=action_started_at,
+                    exception=exc,
+                )
+                self._submit_action_event(
+                    event_type=EventType.ACTION_FAILED,
+                    outcome=EventOutcome.CANCELLED,
+                    tool_name=name,
+                    runtime_id=self.runtime_id(),
+                    generation_before=starting_generation,
+                )
+                raise
             except Exception as exc:
                 self._safe_audit_completion(
                     tool_name=name,
                     action_started_at=action_started_at,
                     exception=exc,
+                )
+                self._submit_action_event(
+                    event_type=EventType.ACTION_FAILED,
+                    outcome=EventOutcome.FAILURE,
+                    tool_name=name,
+                    runtime_id=self.runtime_id(),
+                    error_category=self._classify_exception(exc),
+                    generation_before=starting_generation,
                 )
                 raise
             finally:
@@ -191,6 +315,179 @@ class RuntimeOrchestrator:
                 # the underlying runtime is unusable.
                 if self.state is LifecycleState.EXECUTING:
                     self.state = LifecycleState.READY
+
+    def _submit_action_event(
+        self,
+        *,
+        event_type: EventType,
+        outcome: EventOutcome,
+        tool_name: str,
+        runtime_id: Optional[str],
+        result: Optional[dict[str, Any]] = None,
+        error_category: Optional[str] = None,
+        generation_before: Optional[int] = None,
+    ) -> None:
+        producer = self._observability_producer
+        context = current_context()
+        if producer is None or context is None:
+            return
+
+        result = result or {}
+        metadata: dict[str, Any] = {"tool_name": tool_name}
+        if error_category:
+            metadata["error_category"] = error_category
+        if isinstance(result.get("is_stable"), bool):
+            metadata["is_stable"] = result["is_stable"]
+
+        event_fields: dict[str, Any] = {
+            "event_id": f"evt_{time.time_ns()}",
+            "event_type": event_type,
+            "timestamp_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "severity": Severity.ERROR
+            if outcome in {EventOutcome.FAILURE, EventOutcome.CANCELLED}
+            else Severity.INFO,
+            "source_layer": SourceLayer.LAYER4,
+            "source_component": "RuntimeOrchestrator",
+            "outcome": outcome,
+            "correlation_id": context.correlation_id,
+            "session_id": context.session_id,
+            "operation_id": context.operation_id,
+            "runtime_id": self._safe_identifier(runtime_id),
+            "metadata": metadata,
+        }
+        for field_name in ("ticket_id",):
+            value = self._safe_identifier(result.get(field_name), field_name)
+            if value is not None:
+                event_fields[field_name] = value
+        for field_name in ("generation_before", "generation_after"):
+            candidate = result.get(field_name)
+            if field_name == "generation_before" and candidate is None:
+                candidate = generation_before
+            value = self._safe_nonnegative_int(candidate)
+            if value is not None:
+                event_fields[field_name] = value
+        duration = self._safe_duration(result.get("execution_time_ms"))
+        if duration is not None:
+            event_fields["duration_ms"] = duration
+
+        try:
+            producer.submit(ObservabilityEvent(**event_fields))
+        except (EventValidationError, Exception):
+            logger.warning("l4_action_observability_submit_failed")
+
+    @staticmethod
+    def _active_generation(gateway: AIToolGateway) -> Optional[int]:
+        """Return the current L3 generation when it is safely available."""
+        try:
+            state = gateway.get_active_payload().state
+            return RuntimeOrchestrator._safe_nonnegative_int(getattr(state, "generation", None))
+        except Exception:
+            return None
+
+    def _submit_observation_event(
+        self,
+        event_type: EventType,
+        outcome: EventOutcome,
+        *,
+        duration_ms: Optional[float] = None,
+        error_category: Optional[str] = None,
+    ) -> None:
+        producer = self._observability_producer
+        context = current_context()
+        if producer is None or context is None:
+            return
+
+        metadata = self._observation_metadata()
+        if error_category:
+            metadata["error_category"] = error_category
+        event_fields: dict[str, Any] = {
+            "event_id": f"evt_{time.time_ns()}",
+            "event_type": event_type,
+            "timestamp_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "severity": Severity.ERROR if outcome is EventOutcome.FAILURE else Severity.INFO,
+            "source_layer": SourceLayer.LAYER4,
+            "source_component": "RuntimeOrchestrator",
+            "outcome": outcome,
+            "correlation_id": context.correlation_id,
+            "session_id": context.session_id,
+            "operation_id": context.operation_id,
+            "runtime_id": self._safe_identifier(self.runtime_id()),
+            "metadata": metadata,
+        }
+        safe_duration = self._safe_duration(duration_ms)
+        if safe_duration is not None:
+            event_fields["duration_ms"] = safe_duration
+        try:
+            producer.submit(ObservabilityEvent(**event_fields))
+        except Exception:
+            logger.warning("l4_observation_observability_submit_failed")
+
+    def _observation_metadata(self) -> dict[str, Any]:
+        try:
+            if self._gateway is None:
+                return {}
+            state = self._gateway.get_active_payload().state
+            metadata: dict[str, Any] = {
+                "generation": self._safe_nonnegative_int(state.generation),
+                "field_count": len(state.fields),
+                "is_stable": state.is_stable,
+                "iterations": self._safe_nonnegative_int(state.stability_report.iterations),
+            }
+            if isinstance(state.screen_hash, str) and _SCREEN_HASH_PATTERN.fullmatch(state.screen_hash):
+                metadata["screen_hash"] = state.screen_hash
+            return {key: value for key, value in metadata.items() if value is not None}
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _elapsed_ms(started_at: float) -> float:
+        elapsed = (time.perf_counter() - started_at) * 1000.0
+        return elapsed if math.isfinite(elapsed) and elapsed >= 0 else 0.0
+
+    @staticmethod
+    def _classify_action_result(result: dict[str, Any]) -> tuple[EventType, EventOutcome, Optional[str]]:
+        if result.get("success") is True:
+            return EventType.ACTION_COMPLETED, EventOutcome.SUCCESS, None
+        if result.get("error") == "ContractValidationError":
+            return EventType.ACTION_REJECTED, EventOutcome.REJECTED, "contract_validation"
+        return EventType.ACTION_FAILED, EventOutcome.FAILURE, RuntimeOrchestrator._safe_error_category(result.get("error"))
+
+    @staticmethod
+    def _classify_exception(exception: Exception) -> str:
+        if isinstance(exception, (TimeoutError, asyncio.TimeoutError)):
+            return "timeout"
+        if isinstance(exception, (ConnectionError, OSError)):
+            return "transport_error"
+        return "unknown"
+
+    @staticmethod
+    def _safe_error_category(error: Any) -> str:
+        if isinstance(error, str):
+            lowered = error.lower()
+            if "timeout" in lowered:
+                return "timeout"
+            if "connection" in lowered or "transport" in lowered:
+                return "transport_error"
+        return "unknown"
+
+    @staticmethod
+    def _safe_identifier(value: Any, field_name: str = "runtime_id") -> Optional[str]:
+        if isinstance(value, str) and is_safe_identifier(field_name, value):
+            return value
+        return None
+
+    @staticmethod
+    def _safe_nonnegative_int(value: Any) -> Optional[int]:
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            return value
+        return None
+
+    @staticmethod
+    def _safe_duration(value: Any) -> Optional[float]:
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if math.isfinite(value) and 0 <= value <= MAX_DURATION_MS:
+                return float(value)
+        return None
 
     def _require_ready_gateway(self) -> AIToolGateway:
         if self.state is LifecycleState.DISCONNECTED:

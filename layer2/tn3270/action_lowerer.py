@@ -1,4 +1,5 @@
 """Layer 2 Action Lowerer translating CanonicalActionIntent into protocol-level driver actions for TN3270."""
+import asyncio
 import time
 from typing import Any, Optional
 import structlog
@@ -10,6 +11,8 @@ from layer2.base import ActionLowerer
 from schemas.actions import ActionResult, ActionType, CanonicalActionIntent
 from schemas.contracts import validate_l3_to_l2_action
 from schemas.state import FieldEntry, RuntimeState
+from schemas.observability import EventOutcome, EventType, SourceLayer
+from services.observability_events import submit_layer_event
 
 logger = structlog.get_logger(__name__)
 
@@ -17,8 +20,12 @@ logger = structlog.get_logger(__name__)
 class TN3270ActionLowerer(ActionLowerer):
     """Translates generic CanonicalActionIntent into TN3270 SBA buffer orders and AID transmissions."""
 
-    def __init__(self) -> None:
+    def __init__(self, observability_producer: Any = None) -> None:
         self.downward = TN3270DownwardWriter()
+        self._observability_producer = observability_producer
+
+    def set_observability_producer(self, producer: Any) -> None:
+        self._observability_producer = producer
 
     def _resolve_field(self, field_id: str, state: RuntimeState) -> Optional[FieldEntry]:
         """Resolve a field by dictionary key or FieldEntry.field_id attribute."""
@@ -37,6 +44,7 @@ class TN3270ActionLowerer(ActionLowerer):
     ) -> ActionResult:
         """Validate intent against active state and execute on the TN3270 driver."""
         start_time = time.time()
+        input_attempted = False
 
         try:
             # 1. Enforce strict downward contract
@@ -55,6 +63,7 @@ class TN3270ActionLowerer(ActionLowerer):
                 cursor_row = active_state.cursor.get("row", 0)
                 cursor_col = active_state.cursor.get("col", 0)
                 packet = self.downward.build_aid_packet(aid_name, cursor_row=cursor_row, cursor_col=cursor_col)
+                input_attempted = True
                 await driver.write_raw(packet)
 
             elif intent.intent_type == ActionType.FILL_FIELD:
@@ -71,6 +80,7 @@ class TN3270ActionLowerer(ActionLowerer):
                     col=target.col,
                     aid_name=aid_name,
                 )
+                input_attempted = True
                 await driver.write_raw(packet)
 
             elif intent.intent_type == ActionType.FILL_AND_SUBMIT:
@@ -89,6 +99,7 @@ class TN3270ActionLowerer(ActionLowerer):
                         cursor_row=active_state.cursor.get("row", 0),
                         cursor_col=active_state.cursor.get("col", 0),
                     )
+                    input_attempted = True
                     await driver.write_raw(packet)
                 elif intent.field_id:
                     # Single-field write
@@ -101,6 +112,7 @@ class TN3270ActionLowerer(ActionLowerer):
                         col=target.col,
                         aid_name=aid_name,
                     )
+                    input_attempted = True
                     await driver.write_raw(packet)
                 else:
                     # Bare submit with no field modifications
@@ -109,6 +121,7 @@ class TN3270ActionLowerer(ActionLowerer):
                         cursor_row=active_state.cursor.get("row", 0),
                         cursor_col=active_state.cursor.get("col", 0),
                     )
+                    input_attempted = True
                     await driver.write_raw(packet)
 
             elif intent.intent_type == ActionType.SEND_RAW_KEYS:
@@ -119,6 +132,7 @@ class TN3270ActionLowerer(ActionLowerer):
                 raise ValueError(f"Unsupported intent type: {intent.intent_type}")
 
             duration_ms = (time.time() - start_time) * 1000.0
+            self._submit_driver_event(intent, active_state, driver.__class__.__name__, EventOutcome.SUCCESS, duration_ms)
             return ActionResult(
                 ticket_id=intent.ticket_id,
                 success=True,
@@ -130,8 +144,15 @@ class TN3270ActionLowerer(ActionLowerer):
                 details={"intent_type": intent.intent_type.value},
             )
 
+        except asyncio.CancelledError:
+            duration_ms = (time.time() - start_time) * 1000.0
+            if input_attempted:
+                self._submit_driver_event(intent, active_state, driver.__class__.__name__, EventOutcome.CANCELLED, duration_ms)
+            raise
         except Exception as exc:
             duration_ms = (time.time() - start_time) * 1000.0
+            if input_attempted:
+                self._submit_driver_event(intent, active_state, driver.__class__.__name__, EventOutcome.FAILURE, duration_ms)
             logger.error("l2_action_execution_failed", error=str(exc), ticket_id=intent.ticket_id)
             return ActionResult(
                 ticket_id=intent.ticket_id,
@@ -143,3 +164,23 @@ class TN3270ActionLowerer(ActionLowerer):
                 execution_time_ms=duration_ms,
                 error_message=str(exc),
             )
+
+    def _submit_driver_event(
+        self,
+        intent: CanonicalActionIntent,
+        active_state: RuntimeState,
+        driver_component: str,
+        outcome: EventOutcome,
+        duration_ms: float,
+    ) -> None:
+        submit_layer_event(
+            self._observability_producer,
+            event_type=EventType.DRIVER_INPUT_SENT,
+            outcome=outcome,
+            source_layer=SourceLayer.LAYER1,
+            source_component=driver_component,
+            ticket_id=intent.ticket_id,
+            generation_before=active_state.generation,
+            duration_ms=duration_ms,
+            metadata={"action_id": intent.intent_type.value},
+        )

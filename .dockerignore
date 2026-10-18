@@ -1,0 +1,8 @@
+*
+!schemas/
+!schemas/__init__.py
+!schemas/observability.py
+!services/
+!services/__init__.py
+!services/logging_service/
+!services/logging_service/**

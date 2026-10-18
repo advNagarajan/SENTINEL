@@ -1,0 +1,32 @@
+# Generated from the validated host runtime for the logging service.
+# Target: CPython 3.11 on Linux (x86_64 or aarch64).
+# Keep --require-hashes enabled in the image build.
+--require-hashes
+
+annotated-types==0.7.0 \
+    --hash=sha256:1f02e8b43a8fbbc3f3e0d4f0f4bfc8131bcb4eebe8849b8e5c773f3a1c582a53
+anyio==4.10.0 \
+    --hash=sha256:60e474ac86736bbfd6f210f7a61218939c318f43f9972497381f1c5e930ed3d1
+click==8.2.1 \
+    --hash=sha256:61a3265b914e850b85317d0b3109c7f8cd35a670f963866005d6ef1d5175a12b
+fastapi==0.116.2 \
+    --hash=sha256:c3a7a8fb830b05f7e087d920e0d786ca1fc9892eb4e9a84b227be4c1bc7569db
+h11==0.16.0 \
+    --hash=sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86
+idna==3.10 \
+    --hash=sha256:946d195a0d259cbba61165e88e65941f16e9b36ea6ddb97f00452bae8b1287d3
+pydantic==2.11.9 \
+    --hash=sha256:c42dd626f5cfc1c6950ce6205ea58c93efa406da65f479dcb4029d5934857da2
+pydantic-core==2.33.2 \
+    --hash=sha256:881b21b5549499972441da4758d662aeea93f1923f953e9cbaff14b8b9565aef \
+    --hash=sha256:dc46a01bf8d62f227d5ecee74178ffc448ff4e5197c756331f71efcc66dc980f
+sniffio==1.3.1 \
+    --hash=sha256:2f6da418d1f1e0fddd844478f41680e794e6051915791a034ff65e5f100525a2
+starlette==0.48.0 \
+    --hash=sha256:0764ca97b097582558ecb498132ed0c7d942f233f365b86ba37770e026510659
+typing-extensions==4.15.0 \
+    --hash=sha256:f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548
+typing-inspection==0.4.1 \
+    --hash=sha256:389055682238f53b04f7badcb49b989835495a96700ced5dab2d8feae4b26f51
+uvicorn==0.35.0 \
+    --hash=sha256:197535216b25ff9b785e29a0b79199f55222193d47f820816e7da751e9bc8d4a
