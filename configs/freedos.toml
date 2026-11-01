@@ -26,4 +26,5 @@ auto_logout = false
 entrypoint  = "raw"
 
 [navigator]
-enabled = false
+enabled = true
+url     = "http://localhost:8100"
