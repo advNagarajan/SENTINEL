@@ -1,9 +1,13 @@
 {
   "mcpServers": {
     "sentinel": {
-      "command": "python",
+      "command": ".venv\\Scripts\\python.exe",
       "args": ["scripts/run_sentinel_mcp.py"],
-      "cwd": ".",
+      "cwd": "C:\\Users\\aadha\\Desktop\\SENTINEL",
+      "env": {
+        "SENTINEL_CONFIG": "configs/mainframe.toml",
+        "SENTINEL_OBSERVABILITY_ENDPOINT": "http://127.0.0.1:8200/v1/events"
+      },
       "includeTools": [
         "get_screen_state",
         "get_observation",

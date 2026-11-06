@@ -54,9 +54,13 @@ def find_project_python() -> Path:
 
 def main() -> int:
     python = find_project_python()
+    env = os.environ.copy()
+    env.setdefault("SENTINEL_CONFIG", str(PROJECT_ROOT / "configs" / "mainframe.toml"))
+    env.setdefault("SENTINEL_OBSERVABILITY_ENDPOINT", "http://127.0.0.1:8200/v1/events")
     return subprocess.call(
         [str(python), "-m", "layer4.mcp_server"],
         cwd=PROJECT_ROOT,
+        env=env,
     )
 
 

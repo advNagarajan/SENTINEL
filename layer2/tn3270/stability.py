@@ -2,6 +2,7 @@
 import asyncio
 import time
 from typing import Any, Optional
+import hashlib
 import structlog
 
 from layer2.base import StabilityEngine
@@ -114,8 +115,14 @@ class OIAStabilityEngine(StabilityEngine):
             state = last_state
             state.stability_report = report
             state.is_stable = False
+        elif previous_state is not None:
+            state = previous_state
+            state.stability_report = report
+            state.is_stable = False
+            state.generation = generation
         else:
             blank_grid: list[str] = [" " * 80 for _ in range(24)]
+            empty_hash = hashlib.sha256("".encode()).hexdigest()
             state = RuntimeState(
                 runtime_id=runtime_id,
                 screen_type=ScreenType.TEXT_GRID,
@@ -126,7 +133,7 @@ class OIAStabilityEngine(StabilityEngine):
                 fields={},
                 status_line=None,
                 stability_report=report,
-                screen_hash="",
+                screen_hash=empty_hash,
                 generation=generation,
             )
 

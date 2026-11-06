@@ -177,14 +177,22 @@ class ScreenObjectBuilder:
         # Associate field labels (protected text preceding unprotected fields)
         for i, field_obj in enumerate(fields):
             if not field_obj.protected:
+                label_candidate = ""
                 if i > 0 and fields[i - 1].protected and fields[i - 1].value:
-                    field_obj.label = fields[i - 1].value.rstrip(":")
+                    val = fields[i - 1].value.strip().rstrip(":")
+                    if val in ("==>", "===>", "--->", "->", ":", "?") and i > 1 and fields[i - 2].protected and fields[i - 2].value:
+                        label_candidate = f"{fields[i - 2].value.strip()} {val}".strip()
+                    else:
+                        label_candidate = val
+
+                if label_candidate:
+                    field_obj.label = label_candidate
                 else:
                     r_pre = field_obj.start_row
                     c_pre = field_obj.start_col
                     prefix = "".join(grid[r_pre][:c_pre]).strip()
                     if prefix:
-                        field_obj.label = prefix.split()[-1].rstrip(":")
+                        field_obj.label = prefix.rstrip(":")
                     else:
                         field_obj.label = f"field_{r_pre}_{c_pre}"
 

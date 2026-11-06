@@ -70,7 +70,7 @@ class RuntimeState:
 
     @property
     def generation_token(self) -> str:
-        short_hash = self.screen_hash[:8] if self.screen_hash else "nohash"
+        short_hash = self.screen_hash[:8] if self.screen_hash else "00000000"
         return f"gen_{self.generation}_{short_hash}"
 
 

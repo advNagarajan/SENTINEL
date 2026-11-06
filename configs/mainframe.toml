@@ -15,7 +15,7 @@ use_tls     = false
 [stability]
 poll_interval_ms = 50
 settle_ms        = 100
-max_wait_ms      = 10000
+max_wait_ms      = 20000
 quiescence_ms    = 150
 
 [logging]

@@ -55,6 +55,21 @@ services:
       retries: 5
     restart: unless-stopped
 
+  sqlite-web:
+    image: coleifer/sqlite-web
+    container_name: sentinel-sqlite-web
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      SQLITE_DATABASE: /data/observability.sqlite3
+    volumes:
+      - sentinel_logging_data:/var/lib/sentinel-logging:ro
+    command: ["sqlite_web", "-H", "0.0.0.0", "-p", "8080", "/var/lib/sentinel-logging/observability.sqlite3"]
+    depends_on:
+      logging-service:
+        condition: service_healthy
+    restart: unless-stopped
+
   freedos:
     image: sivakuhan/freedos:latest
     container_name: sentinel-freedos

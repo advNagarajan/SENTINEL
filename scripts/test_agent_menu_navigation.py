@@ -1,4 +1,4 @@
-﻿"""Live Validation Test: Multi-turn autonomous agent menu navigation via strict L3 to L4 contracts."""
+"""Live Validation Test: Multi-turn autonomous agent menu navigation via strict L3 to L4 contracts."""
 import asyncio
 import os
 import sys
@@ -44,7 +44,8 @@ async def main():
         assert any("utilities" in line.lower() for line in obs_gen1["screen_text"]), (
             "Expected 'UTILITIES' option visible in screen_text"
         )
-        assert "fld_option_===>" in obs_gen1["editable_fields"]
+        assert any("option" in k for k in obs_gen1["editable_fields"]), "Expected option field in editable_fields"
+        opt_fid = next(k for k in obs_gen1["editable_fields"].keys() if "option" in k)
 
         # Check compiled tools bound to gen 1
         tool_names = [t["function"]["name"] for t in obs_gen1["available_tools"]]
@@ -56,11 +57,11 @@ async def main():
         # Turn 2: Agent selects Option 3 (UTILITIES)
         # -------------------------------------------------------------------------
         print("\n" + "-" * 60)
-        print("TURN 2: Agent Action -> set_field_and_submit('fld_option_===>', '3', 'ENTER')")
+        print(f"TURN 2: Agent Action -> set_field_and_submit('{opt_fid}', '3', 'ENTER')")
         print("-" * 60)
         obs_gen2 = await harness.step("set_field_and_submit", {
             "generation_token": obs_gen1["generation_token"],
-            "field_id": "fld_option_===>",
+            "field_id": opt_fid,
             "value": "3",
             "action": "ENTER",
         })

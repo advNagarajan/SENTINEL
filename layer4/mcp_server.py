@@ -158,6 +158,12 @@ async def _run_instrumented_tool(
     operation: Callable[[], Awaitable[Any]],
 ) -> Any:
     """Run one registered tool inside one operation context and trace its boundary."""
+    if not getattr(producer, "_accepting", False) and not getattr(producer, "_closed", False):
+        try:
+            await producer.start()
+        except Exception:
+            pass
+
     with operation_context(session_id=session_id):
         started = time.monotonic()
         _submit_mcp_event(
@@ -303,6 +309,8 @@ async def runtime_lifespan(
 def resolve_default_config() -> str:
     if os.environ.get("SENTINEL_CONFIG"):
         return os.environ["SENTINEL_CONFIG"]
+    if Path("configs/mainframe.toml").is_file():
+        return "configs/mainframe.toml"
     if Path("configs/freedos.toml").is_file():
         return "configs/freedos.toml"
     return "configs/mainframe.toml"

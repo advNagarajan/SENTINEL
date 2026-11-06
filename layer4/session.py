@@ -128,71 +128,87 @@ class SessionBootstrapper:
             s, _ = await stability.wait_until_stable(driver=driver, reducer=reducer, runtime_id=runtime_id, generation=gen)
             return s
 
-        # Step 1: Splash Screen -> Press ENTER to reach Logon or INR
-        logger.debug("bootstrap_step_1_splash_enter")
-        state = await step_aid("ENTER", gen=2)
-
-        # Step 1b: If on Logon screen (e.g. 'Logon ===>'), press ENTER to reach INR
-        grid_text = " ".join(state.raw_grid).lower()
-        if "logon ===>" in grid_text and "input not recognized" not in grid_text:
-            logger.debug("bootstrap_step_1b_logon_enter")
-            state = await step_aid("ENTER", gen=3)
+        # Dynamic State-Machine Bootstrap Loop
+        max_bootstrap_steps = 15
+        step_count = 0
+        while step_count < max_bootstrap_steps:
+            step_count += 1
             grid_text = " ".join(state.raw_grid).lower()
+            title_text = (state.title or "").lower()
 
-        # Step 2: Submit username (or reconnect if session already exists)
-        editable = [f for f in state.fields.values() if not f.protected]
-        target_r = editable[0].row if editable else 0
-        target_c = editable[0].col if editable else 0
+            # Target 1: ISPF entrypoint reached
+            if self.entrypoint == "ispf" and ("ispf" in title_text or "ispf" in grid_text) and "option  ===>" in grid_text:
+                logger.info("session_bootstrap_complete", entrypoint="ispf", title=state.title)
+                break
 
-        logger.debug("bootstrap_step_2_send_user", user=self.user, row=target_r, col=target_c)
-        state = await step_input(self.user, row=target_r, col=target_c, gen=4)
-        grid_text = " ".join(state.raw_grid).lower()
+            # Target 2: TSO READY entrypoint reached
+            if self.entrypoint == "tso" and "ready" in grid_text and "ispf" not in title_text and "option  ===>" not in grid_text:
+                logger.info("session_bootstrap_complete", entrypoint="tso", title=state.title)
+                break
 
-        # Step 2b: Check if user is in use or reconnect needed
-        if "in use" in grid_text or "rejected" in grid_text or "enter logon or logoff" in grid_text:
-            logger.info("bootstrap_reconnect_detected", user=self.user)
-            editable_rec = [f for f in state.fields.values() if not f.protected]
-            rec_r = editable_rec[0].row if editable_rec else 0
-            rec_c = editable_rec[0].col if editable_rec else 0
-            state = await step_input(f"logon {self.user} reconnect", row=rec_r, col=rec_c, gen=5)
-            grid_text = " ".join(state.raw_grid).lower()
+            # If already at ISPF but target is TSO, exit ISPF
+            if self.entrypoint == "tso" and "option  ===>" in grid_text:
+                logger.debug("bootstrap_exiting_ispf_to_tso")
+                editable = [f for f in state.fields.values() if not f.protected]
+                r = editable[0].row if editable else 1
+                c = editable[0].col if editable else 14
+                state = await step_input("X", row=r, col=c, gen=step_count)
+                continue
 
-        # Step 3: Password prompt
-        if "password" in grid_text:
-            logger.debug("bootstrap_step_3_send_password")
-            editable_pwd = [f for f in state.fields.values() if not f.protected]
-            pwd_r = editable_pwd[0].row if editable_pwd else 0
-            pwd_c = editable_pwd[0].col if editable_pwd else 0
-            state = await step_input(self.password, row=pwd_r, col=pwd_c, gen=6)
-            grid_text = " ".join(state.raw_grid).lower()
+            # State A: Blank / uninitialized screen -> Press ENTER to trigger Hercules splash
+            if not any(row.strip() for row in state.raw_grid):
+                logger.debug("bootstrap_wake_blank_screen")
+                state = await step_aid("ENTER", gen=step_count)
+                continue
 
-        # Step 4: Clear Welcome / Logon progress screen
-        if "logon in progress" in grid_text or "welcome to the tso" in grid_text or "reconnect successful" in grid_text:
-            logger.debug("bootstrap_step_4_clear_welcome")
-            state = await step_aid("ENTER", gen=7)
-            grid_text = " ".join(state.raw_grid).lower()
+            # State B: Splash Screen -> Press ENTER to reach Logon
+            if "hercules" in grid_text or "turnkey" in grid_text:
+                logger.debug("bootstrap_splash_screen")
+                state = await step_aid("ENTER", gen=step_count)
+                continue
 
-        # Step 5: Clear quote / broadcast messages / *** prompt
-        if "***" in grid_text or "broadcast" in grid_text:
-            logger.debug("bootstrap_step_5_clear_quote")
-            state = await step_aid("ENTER", gen=8)
-            grid_text = " ".join(state.raw_grid).lower()
+            # State C: Logon Screen with 'logon ===>' -> Press ENTER to reach INR
+            if "logon ===>" in grid_text and "input not recognized" not in grid_text:
+                logger.debug("bootstrap_logon_screen")
+                state = await step_aid("ENTER", gen=step_count)
+                continue
 
-        # Step 6: Handle target entrypoint
-        if self.entrypoint == "ispf":
-            # If not yet on ISPF, send one more ENTER in case a quote or multi-line broadcast is waiting
-            if "ispf" not in (state.title or "").lower():
-                state = await step_aid("ENTER", gen=9)
-            logger.info("session_bootstrap_complete", entrypoint="ispf", title=state.title)
+            # State D: User in use / rejected -> Reconnect
+            if "in use" in grid_text or "rejected" in grid_text:
+                logger.debug("bootstrap_reconnect_user", user=self.user)
+                editable = [f for f in state.fields.values() if not f.protected]
+                r = editable[0].row if editable else 0
+                c = editable[0].col if editable else 0
+                state = await step_input(f"logon {self.user} reconnect", row=r, col=c, gen=step_count)
+                continue
 
-        elif self.entrypoint == "tso":
-            # If landed in ISPF, exit to TSO READY prompt
-            if "ispf" in (state.title or "").lower():
-                editable_ispf = [f for f in state.fields.values() if not f.protected]
-                opt_r = editable_ispf[0].row if editable_ispf else 1
-                opt_c = editable_ispf[0].col if editable_ispf else 14
-                state = await step_input("X", row=opt_r, col=opt_c, gen=9)
-            logger.info("session_bootstrap_complete", entrypoint="tso", title=state.title)
+            # State E: 'INPUT NOT RECOGNIZED' or username prompt
+            if "input not recognized" in grid_text or "enter logon" in grid_text or ("user" in grid_text and "password" not in grid_text):
+                logger.debug("bootstrap_send_user", user=self.user)
+                editable = [f for f in state.fields.values() if not f.protected]
+                r = editable[0].row if editable else 0
+                c = editable[0].col if editable else 0
+                state = await step_input(self.user, row=r, col=c, gen=step_count)
+                continue
+
+            # State F: Password prompt
+            if "password" in grid_text:
+                logger.debug("bootstrap_send_password")
+                editable = [f for f in state.fields.values() if not f.protected]
+                r = editable[0].row if editable else 0
+                c = editable[0].col if editable else 0
+                state = await step_input(self.password, row=r, col=c, gen=step_count)
+                continue
+
+            # State G: Welcome / logon progress / broadcast / quote / *** prompt -> Press ENTER to dismiss
+            if any(k in grid_text for k in ["welcome", "progress", "***", "broadcast", "quote", "ikj"]):
+                logger.debug("bootstrap_dismiss_banner")
+                state = await step_aid("ENTER", gen=step_count)
+                continue
+
+            # Default fallback: Send ENTER to advance
+            logger.debug("bootstrap_advance_enter")
+            state = await step_aid("ENTER", gen=step_count)
 
         # Normalize bootstrapped state as Generation #1 for Layer 4 Agent
         state.generation = 1
