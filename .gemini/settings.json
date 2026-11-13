@@ -3,10 +3,14 @@
     "sentinel": {
       "command": "python",
       "args": ["scripts/run_sentinel_mcp.py"],
+      "env": {
+        "SENTINEL_CONFIG": "configs/mainframe.toml"
+      },
       "cwd": ".",
       "includeTools": [
         "get_screen_state",
         "get_observation",
+        "view_graph",
         "set_field_and_submit",
         "fill_form_and_submit",
         "trigger_action"

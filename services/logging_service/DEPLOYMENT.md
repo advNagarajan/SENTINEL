@@ -98,3 +98,28 @@ online backup API, `PRAGMA quick_check`, record preservation, duplicate-event
 idempotency, and restoration into a separate destination. It does not perform
 remote backups, encryption, scheduled backups, or disaster-recovery service
 automation.
+
+## Isolated live integration check
+
+The combined logging and Navigator live check builds and starts only Neo4j,
+Navigator, and the logging service under a unique Docker Compose project. It
+uses project-scoped volumes and dynamically assigned loopback ports, verifies
+that the new graph is empty before writing, and removes only that project's
+containers and volumes on exit. It does not start the mainframe or FreeDOS
+containers and does not touch the regular `sentinel` Compose project or its
+data volumes.
+
+Run it from the repository root in PowerShell:
+
+```powershell
+$env:SENTINEL_RUN_ISOLATED_INTEGRATION = "1"; python scripts/test_logging_graph_live.py
+```
+
+Docker Compose and the repository's Python test dependencies must be available.
+The check verifies event batch ingestion, duplicate idempotency, producer
+delivery/outage/recovery, persistence through a logging-service restart, graph
+transition upserts and traversal counts, predictions, neighbors, paths, screen
+search, statistics, and rejection of a mutating graph query. It uses synthetic
+IDs and values only. If the run is forcibly terminated before cleanup, use the
+printed `sentinel-it-...` project name to inspect and remove only that isolated
+test project.

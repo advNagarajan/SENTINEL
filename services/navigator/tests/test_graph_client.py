@@ -307,6 +307,9 @@ async def test_find_path_returns_steps(mock_graph_client):
 
     result = await client.find_path("aaa", "ccc")
 
+    query_text, _ = session.queries[0]
+    assert "WITH path, nodes(path)" in query_text
+    assert "length(path) AS path_length" in query_text
     assert result["found"] is True
     assert result["path_length"] == 2
     assert len(result["steps"]) == 3
@@ -392,4 +395,3 @@ async def test_run_read_query_rejects_mutations(mock_graph_client):
 
     with pytest.raises(ValueError, match="Forbidden Cypher operation"):
         await client.run_read_query("MATCH (s:Screen) DELETE s")
-

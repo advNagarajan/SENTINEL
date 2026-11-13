@@ -308,7 +308,7 @@ class GraphClient:
         WHERE end.screen_hash = $to_hash OR end.structural_hash = $to_hash
         WITH start, end
         MATCH path = shortestPath((start)-[:TRANSITION*..20]->(end))
-        WITH nodes(path) AS ns, relationships(path) AS rs
+        WITH path, nodes(path) AS ns, relationships(path) AS rs
         RETURN
             [n IN ns | {screen_hash: n.screen_hash, title: n.title}] AS steps,
             [r IN rs | r.action_signature] AS actions,
@@ -479,4 +479,3 @@ class GraphClient:
                 return record["ok"] == 1
         except Exception:
             return False
-

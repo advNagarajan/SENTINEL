@@ -186,6 +186,75 @@ class RuntimeOrchestrator:
         )
         return result
 
+    async def view_graph(
+        self,
+        screen_hash: Optional[str] = None,
+        depth: int = 1,
+    ) -> dict[str, Any]:
+        """Return a bounded, read-only neighborhood from the Navigator graph."""
+        if isinstance(depth, bool) or not isinstance(depth, int) or not 1 <= depth <= 3:
+            return {
+                "success": False,
+                "error": "InvalidDepth",
+                "message": "depth must be an integer from 1 to 3.",
+            }
+        if self._navigator is None:
+            return {
+                "success": False,
+                "error": "NavigatorDisabled",
+                "message": "The Navigator graph service is not configured.",
+            }
+
+        target_hash = screen_hash
+        if target_hash is None:
+            if self._active_state is None:
+                return {
+                    "success": False,
+                    "error": "RuntimeNotReady",
+                    "message": "No current screen is available to center the graph view.",
+                }
+            target_hash = self._active_state.screen_hash
+        if (
+            not isinstance(target_hash, str)
+            or not target_hash.strip()
+            or len(target_hash) > 128
+        ):
+            return {
+                "success": False,
+                "error": "InvalidScreenHash",
+                "message": "screen_hash must be a non-empty screen or structural hash.",
+            }
+        target_hash = target_hash.strip()
+
+        graph = await self._navigator.get_neighbors(target_hash, depth=depth)
+        if graph is None:
+            return {
+                "success": False,
+                "error": "NavigatorUnavailable",
+                "message": "The Navigator graph service did not return a graph.",
+            }
+
+        node_fields = ("screen_hash", "structural_hash", "title", "visit_count", "depth")
+        edge_fields = (
+            "source_hash",
+            "target_hash",
+            "action_signature",
+            "traversal_count",
+        )
+        return {
+            "success": True,
+            "center_hash": graph["center_hash"],
+            "depth": graph["depth"],
+            "nodes": [
+                {key: node[key] for key in node_fields if key in node}
+                for node in graph["nodes"]
+            ],
+            "edges": [
+                {key: edge[key] for key in edge_fields if key in edge}
+                for edge in graph["edges"]
+            ],
+        }
+
     async def execute_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if name == "get_screen_state":
             started_at = time.perf_counter()

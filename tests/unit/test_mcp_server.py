@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from layer4.mcp_server import _safe_runtime_id, create_server
+from layer4.orchestrator import RuntimeOrchestrator
 from schemas.observability import EventOutcome, EventType
 from services.observability_producer import DEFAULT_ENDPOINT, EventProducer, ProducerConfig
 from services.observability_context import current_context
@@ -70,6 +71,93 @@ async def test_mcp_read_tools_delegate_to_runtime(orchestrator):
         "generation": 2,
     }
     orchestrator.execute_tool.assert_awaited_once_with("get_screen_state", {})
+
+
+@pytest.mark.asyncio
+async def test_view_graph_mcp_tool_is_registered_and_delegates_read_only_query(orchestrator):
+    graph = {
+        "success": True,
+        "center_hash": "screen-hash",
+        "depth": 1,
+        "nodes": [],
+        "edges": [],
+    }
+    orchestrator.view_graph = AsyncMock(return_value=graph)
+    server = create_server(orchestrator=orchestrator)
+
+    tools = {tool.name: tool for tool in server._tool_manager.list_tools()}
+    assert "view_graph" in tools
+    assert set(tools["view_graph"].parameters["properties"]) == {"screen_hash", "depth"}
+
+    _content, result = await server.call_tool("view_graph", {})
+
+    assert result == graph
+    orchestrator.view_graph.assert_awaited_once_with(screen_hash=None, depth=1)
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_view_graph_uses_current_screen_and_omits_edge_values():
+    runtime = RuntimeOrchestrator.__new__(RuntimeOrchestrator)
+    runtime._active_state = SimpleNamespace(screen_hash="current-screen")
+    runtime._navigator = SimpleNamespace(
+        get_neighbors=AsyncMock(
+            return_value={
+                "center_hash": "current-screen",
+                "depth": 1,
+                "nodes": [
+                    {
+                        "screen_hash": "current-screen",
+                        "structural_hash": "structure",
+                        "title": "Synthetic screen",
+                        "visit_count": 1,
+                        "depth": 0,
+                    }
+                ],
+                "edges": [
+                    {
+                        "source_hash": "current-screen",
+                        "target_hash": "next-screen",
+                        "action_signature": "set_field_and_submit:fld_input:ENTER",
+                        "traversal_count": 1,
+                        "values_seen": ["sensitive-entered-value"],
+                    }
+                ],
+            }
+        )
+    )
+
+    result = await runtime.view_graph()
+
+    assert result["success"] is True
+    assert result["center_hash"] == "current-screen"
+    assert result["edges"][0]["action_signature"].endswith(":ENTER")
+    assert "values_seen" not in result["edges"][0]
+    runtime._navigator.get_neighbors.assert_awaited_once_with("current-screen", depth=1)
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_view_graph_rejects_unbounded_depth():
+    runtime = RuntimeOrchestrator.__new__(RuntimeOrchestrator)
+    runtime._active_state = SimpleNamespace(screen_hash="current-screen")
+    runtime._navigator = SimpleNamespace(get_neighbors=AsyncMock())
+
+    result = await runtime.view_graph(depth=4)
+
+    assert result["success"] is False
+    assert result["error"] == "InvalidDepth"
+    runtime._navigator.get_neighbors.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_view_graph_reports_unavailable_navigator():
+    runtime = RuntimeOrchestrator.__new__(RuntimeOrchestrator)
+    runtime._active_state = SimpleNamespace(screen_hash="current-screen")
+    runtime._navigator = SimpleNamespace(get_neighbors=AsyncMock(return_value=None))
+
+    result = await runtime.view_graph()
+
+    assert result["success"] is False
+    assert result["error"] == "NavigatorUnavailable"
 
 
 @pytest.mark.asyncio

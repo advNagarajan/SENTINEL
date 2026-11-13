@@ -374,6 +374,26 @@ def create_server(
         )
 
     @server.tool()
+    async def view_graph(
+        screen_hash: Optional[str] = None,
+        depth: int = 1,
+    ) -> dict[str, Any]:
+        """View a bounded, read-only neighborhood of the Navigator graph.
+
+        When screen_hash is omitted, the current screen is used. Returned graph
+        data excludes entered values.
+        """
+        async def operation() -> dict[str, Any]:
+            return await runtime.view_graph(screen_hash=screen_hash, depth=depth)
+
+        return await _run_instrumented_tool(
+            producer=active_producer,
+            session_id=session_id,
+            tool_name="view_graph",
+            operation=operation,
+        )
+
+    @server.tool()
     async def set_field_and_submit(
         generation_token: str,
         field_id: str,
